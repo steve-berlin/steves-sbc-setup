@@ -1,0 +1,5 @@
+# Follow `. lib/common.sh` into the sourced file.
+external-sources=true
+# Resolve `source=` directives relative to the script, not the caller's cwd.
+source-path=SCRIPTDIR
+shell=bash

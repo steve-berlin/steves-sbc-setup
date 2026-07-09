@@ -1,0 +1,6 @@
+*.bak.*
+*.swp
+.DS_Store
+
+# machine-local Claude Code settings
+.claude/settings.local.json
