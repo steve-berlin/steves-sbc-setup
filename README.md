@@ -89,6 +89,11 @@ only loopback, established connections, ICMP, DHCP replies, port 22, and
 anything arriving on `tailscale0`. `monitor.sh` depends on this to keep `:9100`
 off the public internet.
 
+**Login shell.** `shell.sh` switches the owner's login shell to zsh (`chsh`) and
+writes `~/.zshrc` + `~/.tmux.conf` owned by that user. It takes effect on next
+login; the old dotfiles are backed up. Set `SHELL_NO_CHSH=1` to keep your
+current shell and only drop the config files.
+
 ## Requirements
 
 - an apt-based distro (Debian, Ubuntu, Armbian, Raspberry Pi OS) with systemd
