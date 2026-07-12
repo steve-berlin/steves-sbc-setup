@@ -50,9 +50,16 @@ re-exec, idempotent file installs, and apt wrappers.
 
 ## Docs
 
-Plain-language, "explain it like I'm 11" walkthroughs live in [`docs/`](docs/):
+Plain-language, "explain it like I'm 11" walkthroughs live in [`docs/`](docs/),
+one per stage:
 
-- [`docs/shell.md`](docs/shell.md) — why the zsh + tmux stage is built the way it is
+- [`docs/base.md`](docs/base.md) — packages, clock, zram, auto-updates
+- [`docs/harden.md`](docs/harden.md) — SSH, sysctl, firewall
+- [`docs/tailscale.md`](docs/tailscale.md) — the mesh VPN
+- [`docs/podman.md`](docs/podman.md) — rootless containers + Quadlet
+- [`docs/shell.md`](docs/shell.md) — zsh + tmux
+- [`docs/monitor.md`](docs/monitor.md) — node_exporter metrics
+- [`docs/backup.md`](docs/backup.md) — restic backups
 
 ## Conventions
 
