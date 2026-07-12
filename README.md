@@ -40,12 +40,19 @@ SKIP="tailscale monitor" ./setup/bootstrap.sh
 | `setup/harden.sh` | sshd lockdown, kernel + network sysctl tuning (BBR, zram-aware VM), nftables default-deny firewall |
 | `setup/tailscale.sh` | Official Tailscale repo + `tailscaled`, so you can reach the box from anywhere |
 | `setup/podman.sh` | Rootless, daemonless container host with Quadlet units managed by systemd |
+| `setup/shell.sh` | zsh (apt plugins, no framework) + tmux (plugin-free) for the box's owner |
 | `setup/monitor.sh` | `prometheus-node-exporter` on `:9100`, reachable over the tailnet only |
 | `setup/backup.sh` | Encrypted, deduplicated `restic` backups on a daily systemd timer |
 | `setup/bootstrap.sh` | Runs all of the above, in dependency order |
 
 `lib/common.sh` holds the shared helpers: logging, `--dry-run` plumbing, sudo
 re-exec, idempotent file installs, and apt wrappers.
+
+## Docs
+
+Plain-language, "explain it like I'm 11" walkthroughs live in [`docs/`](docs/):
+
+- [`docs/shell.md`](docs/shell.md) — why the zsh + tmux stage is built the way it is
 
 ## Conventions
 

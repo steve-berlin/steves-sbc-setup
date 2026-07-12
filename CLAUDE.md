@@ -16,9 +16,11 @@ setup/base.sh      packages, chrony, zram, unattended-upgrades
 setup/harden.sh    sshd, sysctl, nftables
 setup/tailscale.sh mesh VPN
 setup/podman.sh    rootless containers + Quadlet
+setup/shell.sh     zsh + tmux for the box's owner
 setup/monitor.sh   prometheus-node-exporter
 setup/backup.sh    restic + systemd timer
 setup/bootstrap.sh runs all stages in order
+docs/              plain-language, per-script explanations (docs/shell.md, …)
 ```
 
 ## Conventions every script follows
@@ -119,6 +121,26 @@ Tailscale IP — that address doesn't exist until `tailscaled` has come up.
 **Stage order in `bootstrap.sh` is load-bearing.** `harden` installs the rule
 admitting `tailscale0` *before* `tailscale` brings the interface up, and
 `monitor` relies on that same ruleset to keep `:9100` private.
+
+**Shell config is deliberately lean, unlike the desktop repo.** `shell.sh`
+avoids oh-my-zsh/starship/atuin and the tmux plugin manager on purpose: those
+fetch from GitHub at setup time and cost startup latency on SD storage. It uses
+only apt packages (`zsh-syntax-highlighting`, `zsh-autosuggestions`) and native
+zsh/tmux features. Do not "upgrade" it to a framework — that reintroduces a
+network dependency into provisioning.
+
+**tmux `default-terminal` is `screen-256color`, not `tmux-256color`.** The
+latter needs `ncurses-term`, absent on minimal SBC images, and colours break
+without it. `screen-256color` is in the base terminfo everywhere.
+
+**zsh syntax-highlighting must be sourced last in `.zshrc`.** It wraps the line
+editor and no-ops silently if anything is sourced after it. Autosuggestions
+first, highlighting last.
+
+**Dotfiles are written user-owned.** `install_file` takes an optional third
+`OWNER` arg (`user:group`); `shell.sh` uses it so `~/.zshrc` / `~/.tmux.conf`
+belong to the target user, not root — a root-owned `.zshrc` is ignored by zsh.
+The owner is `target_user` (`$SUDO_USER`/`$TARGET_USER`), same as podman.sh.
 
 ## Verifying changes
 

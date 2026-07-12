@@ -94,10 +94,11 @@ apt_install() {
 }
 
 # --- idempotent file install ------------------------------------------------
-# install_file DEST [MODE]   (content on stdin)
-# Writes only when content differs; backs up any file it replaces.
+# install_file DEST [MODE] [OWNER]   (content on stdin)
+# Writes only when content differs; backs up any file it replaces. OWNER, when
+# given as user:group, sets ownership (used for dotfiles in a user's home).
 install_file() {
-	local dest="$1" mode="${2:-0644}" tmp
+	local dest="$1" mode="${2:-0644}" owner="${3:-}" tmp
 	tmp="$(mktemp)"
 	cat >"$tmp"
 	if [ -f "$dest" ] && cmp -s "$tmp" "$dest"; then
@@ -106,7 +107,7 @@ install_file() {
 		return 0
 	fi
 	if [ "$DRY_RUN" = 1 ]; then
-		warn "[dry] would write $dest (mode $mode):"
+		warn "[dry] would write $dest (mode $mode${owner:+, owner $owner}):"
 		sed 's/^/      /' "$tmp" >&2
 		rm -f "$tmp"
 		return 0
@@ -115,7 +116,11 @@ install_file() {
 		cp -a "$dest" "$dest.bak.$(date +%s)"
 		warn "backed up existing $dest"
 	fi
-	install -D -m "$mode" "$tmp" "$dest"
+	if [ -n "$owner" ]; then
+		install -D -m "$mode" -o "${owner%%:*}" -g "${owner##*:}" "$tmp" "$dest"
+	else
+		install -D -m "$mode" "$tmp" "$dest"
+	fi
 	rm -f "$tmp"
 	ok "wrote $dest"
 }

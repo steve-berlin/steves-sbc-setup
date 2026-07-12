@@ -14,6 +14,7 @@ Runs each stage in order:
     harden     sshd lockdown, sysctl tuning, nftables default-deny
     tailscale  mesh VPN (joins only if TS_AUTHKEY is set)
     podman     rootless container host + Quadlet
+    shell      zsh + tmux for the box's owner
     monitor    prometheus-node-exporter on :9100
     backup     restic + daily systemd timer
 
@@ -27,7 +28,7 @@ Every stage is individually idempotent; so is this.
 EOF
 }
 
-STAGES=(base harden tailscale podman monitor backup)
+STAGES=(base harden tailscale podman shell monitor backup)
 
 skipped() {
 	local s
