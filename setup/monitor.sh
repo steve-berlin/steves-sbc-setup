@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # monitor.sh — Prometheus node_exporter for host metrics.
+# Re-exec under bash if started with `sh script`: that bypasses the shebang, and
+# pipefail / arrays / ${BASH_SOURCE} below are bashisms dash cannot run.
+if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 set -euo pipefail
 # shellcheck source=../lib/common.sh
 . "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
