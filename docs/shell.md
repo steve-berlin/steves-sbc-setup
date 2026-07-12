@@ -1,160 +1,90 @@
 # `setup/shell.sh` explained
 
-Plain-language walkthrough of the zsh + tmux stage. If you just want to use it,
-the README is enough — this is the "why is it built this way" version.
+Plain-language walkthrough of zsh + tmux stage. Want to use it? README enough — this the "why built this way" version.
 
 ## What it's for
 
-Two comforts for a computer you only ever talk to over SSH:
+Two comforts for computer you only talk to over SSH:
 
-- **zsh** — a nicer shell than the default. Tab-completion that shows a menu,
-  suggestions from your history as you type, and colours that flag a typo before
-  you hit Enter.
-- **tmux** — a "screen saver for your work." Start a long job inside tmux, your
-  wifi drops, the SSH connection dies — the job keeps running. Reconnect, run
-  `tmux attach`, and you're back exactly where you were, output and all.
+- **zsh** — nicer shell than default. Tab-completion show menu, suggestions from history as you type, colours flag typo before Enter.
+- **tmux** — "screen saver for work." Start long job in tmux, wifi drop, SSH die — job keep running. Reconnect, run `tmux attach`, back exactly where you were, output and all.
 
-One script sets up both, for the one human who owns the box.
+One script set up both, for one human who own box.
 
 ## The big decision: lean, not fancy
 
-The desktop version of this setup (steves-debian-setup) uses **oh-my-zsh**,
-**starship**, **atuin**, and a **tmux plugin manager** that downloads five
-plugins from GitHub. That's great on a beefy laptop. On a 2 GB single-board
-computer it's the wrong call, for three reasons:
+Desktop version (steves-debian-setup) use **oh-my-zsh**, **starship**, **atuin**, and **tmux plugin manager** that download five plugins from GitHub. Great on beefy laptop. On 2 GB single-board computer, wrong call, three reasons:
 
-1. **Startup cost.** oh-my-zsh runs a pile of code every time you open a shell.
-   On slow SD-card storage you feel it.
-2. **Network fetches.** Those plugins are cloned from the internet on first run.
-   A provisioning script that needs GitHub to be reachable is a script that
-   breaks when GitHub is down — or when the box has no internet yet.
-3. **Dependencies.** Every extra tool is another thing to update and another
-   thing that can break.
+1. **Startup cost.** oh-my-zsh run pile of code every shell open. On slow SD-card storage you feel it.
+2. **Network fetches.** Those plugins cloned from internet on first run. Provisioning script that need GitHub reachable = script that break when GitHub down — or when box have no internet yet.
+3. **Dependencies.** Every extra tool = another thing to update, another thing that break.
 
-So this script uses **only** what Debian ships in apt, and **zero** plugins that
-have to be downloaded. Everything is either built into zsh/tmux or a package
-`apt` already knows about. First shell start is instant and nothing phones home.
+So script use **only** what Debian ship in apt, and **zero** plugins that need download. Everything built into zsh/tmux or package `apt` already know. First shell start instant. Nothing phone home.
 
-If you *do* want the fancy tools, they're available as an **opt-in** — see "Rich
-mode" at the end. The point is that the *default* stays lean and offline, and you
-choose to add weight, rather than having it forced on you.
+Want fancy tools? Available as **opt-in** — see "Rich mode" at end. Point: *default* stay lean and offline. You choose to add weight, not have it forced.
 
 ## The zsh choices, one at a time
 
-**No framework.** Instead of oh-my-zsh, the config is ~25 lines of plain zsh.
-Does 90% of what people actually want from oh-my-zsh, at none of the cost.
+**No framework.** Instead of oh-my-zsh, config ~25 lines plain zsh. Do 90% of what people actually want from oh-my-zsh, none of cost.
 
-**Two apt plugins.** Debian packages `zsh-syntax-highlighting` (commands turn
-green when valid, red when not) and `zsh-autosuggestions` (ghostly grey
-suggestion from your history — press → to accept). These are the two features
-worth having. They install like any other package.
+**Two apt plugins.** Debian packages `zsh-syntax-highlighting` (commands green when valid, red when not) and `zsh-autosuggestions` (grey ghost suggestion from history — press → to accept). Two features worth having. Install like any other package.
 
-**Order matters for one of them.** Syntax-highlighting has to be the *last*
-thing loaded, because it wraps the line editor and needs to see everything set
-up before it. Load it too early and it silently does nothing. That's why it's
-the final line of the file, with a comment saying so.
+**Order matters for one of them.** Syntax-highlighting must be *last* thing loaded — it wrap line editor, need to see everything set up first. Load too early, it silently do nothing. That why it final line of file, with comment saying so.
 
-**`compinit -C`.** Completion normally does a security scan of its files every
-day, which costs a beat at startup. On a single-user box that scan buys you
-almost nothing, so `-C` skips it. Small speed win that matters on weak hardware.
+**`compinit -C`.** Completion normally do security scan of its files every day, cost beat at startup. On single-user box that scan buy almost nothing, so `-C` skip it. Small speed win, matter on weak hardware.
 
-**A git-aware prompt with no extra program.** The desktop uses `starship`, a
-separate binary you have to install and keep updated. This prompt shows the same
-key thing — your current git branch — using `vcs_info`, which is *built into
-zsh*. One less dependency, same payoff. It looks like:
+**Git-aware prompt, no extra program.** Desktop use `starship`, separate binary to install and keep updated. This prompt show same key thing — current git branch — using `vcs_info`, *built into zsh*. One less dependency, same payoff. Look like:
 
 ```
 steve@sbc:~/steves-sbc-setup (main)%
 ```
 
-**Emacs keybindings (`bindkey -e`).** Not about the Emacs editor — it's the set
-of keyboard shortcuts (Ctrl-A to jump to line start, and so on) that every SSH
-client assumes by default. Setting it explicitly avoids surprises.
+**Emacs keybindings (`bindkey -e`).** Not about Emacs editor — set of keyboard shortcuts (Ctrl-A jump to line start, etc.) every SSH client assume by default. Set explicitly, avoid surprises.
 
 ## The tmux choices, one at a time
 
-**Zero plugins.** The single feature that actually matters on a server —
-sessions surviving a dropped connection — is *built into tmux*. It needs no
-plugin at all. So there's no plugin manager here, nothing to download, nothing
-to break.
+**Zero plugins.** Single feature that actually matter on server — sessions surviving dropped connection — *built into tmux*. Need no plugin. So no plugin manager here, nothing to download, nothing to break.
 
-**Prefix is Ctrl-A, not Ctrl-B.** tmux listens for a "prefix" key before its
-commands. The default, Ctrl-B, is an awkward reach. Ctrl-A sits under your left
-hand. (If you also use GNU `screen`, this will feel familiar — it's screen's
-key.)
+**Prefix is Ctrl-A, not Ctrl-B.** tmux listen for "prefix" key before its commands. Default Ctrl-B = awkward reach. Ctrl-A sit under left hand. (Also use GNU `screen`? Feel familiar — it screen's key.)
 
-**`screen-256color`, not `tmux-256color`.** This tells programs what your
-terminal can do. The "better" value, `tmux-256color`, needs an extra package
-(`ncurses-term`) that a minimal SBC image often doesn't have — and without it,
-colours break. `screen-256color` is present *everywhere* out of the box. We
-trade a tiny bit of polish (italic text) for "it just works on any image."
+**`screen-256color`, not `tmux-256color`.** Tell programs what terminal can do. "Better" value `tmux-256color` need extra package (`ncurses-term`) that minimal SBC image often lack — without it, colours break. `screen-256color` present *everywhere* out of box. Trade tiny polish (italic text) for "just work on any image."
 
-**`escape-time 10`.** Without this, tmux waits after you press Esc to see if
-it's part of a longer key sequence. In vim over a slow link, that wait makes Esc
-feel broken. Ten milliseconds fixes it without causing false triggers.
+**`escape-time 10`.** Without this, tmux wait after Esc press to see if part of longer key sequence. In vim over slow link, that wait make Esc feel broken. Ten milliseconds fix it without false triggers.
 
-**Mouse on, big scrollback, intuitive splits.** Quality-of-life: you can click
-between panes and scroll with the wheel; 50,000 lines of history are kept; and
-`|` / `-` split the window vertically / horizontally, opening the new pane in
-the *same folder* you were already in.
+**Mouse on, big scrollback, intuitive splits.** Quality-of-life: click between panes, scroll with wheel; 50,000 lines of history kept; `|` / `-` split window vertically / horizontally, new pane open in *same folder* you were in.
 
 ## The login-shell switch
 
-Installing zsh doesn't make it *your* shell — you'd still land in the old one
-every login. The script runs `chsh` to change your default shell to zsh. It does
-this idempotently (checks first, skips if already done) and reversibly (you can
-`chsh` back any time). Don't want it touched at all? Run with `SHELL_NO_CHSH=1`.
+Installing zsh not make it *your* shell — you still land in old one every login. Script run `chsh` to change default shell to zsh. Idempotent (check first, skip if done) and reversible (`chsh` back any time). Don't want it touched? Run with `SHELL_NO_CHSH=1`.
 
-The change takes effect on your next login, not immediately — so after the first
-run, log out and back in to land in zsh.
+Change take effect on next login, not immediately — so after first run, log out and back in to land in zsh.
 
 ## Who it configures
 
-Like the podman stage, this targets the box's *human owner*, not root — figured
-out from `$SUDO_USER` (the account that ran `sudo`), or `$TARGET_USER` if you're
-running as root directly. The dotfiles are written into that user's home and
-owned by that user, not root, so zsh will actually read them.
+Like podman stage, target box's *human owner*, not root — figured from `$SUDO_USER` (account that ran `sudo`), or `$TARGET_USER` if running as root directly. Dotfiles written into that user's home, owned by that user, not root, so zsh actually read them.
 
 ## Rich mode (`SHELL_RICH=1`)
 
-Run `SHELL_RICH=1 ./setup/shell.sh` (or set it before `bootstrap.sh`) and the
-script adds two popular extras on top of the lean base:
+Run `SHELL_RICH=1 ./setup/shell.sh` (or set before `bootstrap.sh`) and script add two popular extras on top of lean base:
 
-- **starship** — a fancy, fast prompt that shows git status, language versions,
-  exit codes, and more. It *replaces* the built-in git prompt.
-- **atuin** — supercharged shell history: full-text search of every command you
-  have ever run, synced and stored in a database, bound to Ctrl-R.
+- **starship** — fancy fast prompt: git status, language versions, exit codes, more. *Replace* built-in git prompt.
+- **atuin** — supercharged shell history: full-text search of every command ever run, synced and stored in database, bound to Ctrl-R.
 
-Three things to understand before you flip it on:
+Three things to understand before flipping it on:
 
-**They are not apt packages.** Neither is in Debian, so the script installs them
-by downloading each project's official installer from the internet and running
-it — starship into `/usr/local/bin` (system-wide), atuin into the user's own
-`~/.atuin`. That means rich mode **needs internet** at setup time and asks you to
-trust those upstream installers. The lean default never does either. This is the
-whole reason it's opt-in and not the default.
+**Not apt packages.** Neither in Debian, so script install them by downloading each project's official installer from internet and running it — starship into `/usr/local/bin` (system-wide), atuin into user's own `~/.atuin`. Means rich mode **need internet** at setup time and ask you to trust those upstream installers. Lean default never do either. That whole reason it opt-in, not default.
 
-**The extra `~/.zshrc` lines are guarded.** They read
-`command -v starship >/dev/null && eval "$(starship init zsh)"` — meaning "only
-turn starship on if it's actually installed." So if an install ever fails or you
-remove the binary, your shell still starts fine and quietly falls back to the
-native prompt. Nothing breaks.
+**Extra `~/.zshrc` lines guarded.** They read `command -v starship >/dev/null && eval "$(starship init zsh)"` — meaning "only turn starship on if actually installed." So if install ever fail or you remove binary, shell still start fine, quietly fall back to native prompt. Nothing break.
 
-**starship wins the prompt.** The lean config already sets a git-aware prompt;
-starship loads after it and takes over completely. That's intended — you asked
-for starship, you get starship. The native prompt is just the fallback.
+**starship win prompt.** Lean config already set git-aware prompt; starship load after and take over completely. Intended — you ask for starship, you get starship. Native prompt just fallback.
 
-Everything else (zsh plugins, tmux, aliases, the shell switch) is identical to
-lean mode. Rich mode only *adds*.
+Everything else (zsh plugins, tmux, aliases, shell switch) identical to lean mode. Rich mode only *add*.
 
 ## How it was checked
 
 - `shellcheck -x` clean, like every script here.
-- Both the lean and rich generated `.zshrc` files were fed to `zsh -n` (syntax
-  check) — both parse clean.
-- The generated `.tmux.conf` was loaded by a real `tmux` — parses clean.
-- Lean `--dry-run` was confirmed to mention neither starship nor atuin; rich
-  `--dry-run` was confirmed to install both and append their init lines.
+- Both lean and rich generated `.zshrc` files fed to `zsh -n` (syntax check) — both parse clean.
+- Generated `.tmux.conf` loaded by real `tmux` — parses clean.
+- Lean `--dry-run` confirmed to mention neither starship nor atuin; rich `--dry-run` confirmed to install both and append their init lines.
 
-As with the rest of the repo, that verification ran on an amd64 box, not on the
-Pinebook itself.
+Like rest of repo, that verification ran on amd64 box, not on Pinebook itself.
