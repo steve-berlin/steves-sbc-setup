@@ -60,6 +60,7 @@ one per stage:
 - [`docs/shell.md`](docs/shell.md) — zsh + tmux
 - [`docs/monitor.md`](docs/monitor.md) — node_exporter metrics
 - [`docs/backup.md`](docs/backup.md) — restic backups
+- [`docs/line-by-line.md`](docs/line-by-line.md) — every function and operation, line by line
 
 ## Conventions
 
