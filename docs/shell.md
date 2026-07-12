@@ -35,6 +35,10 @@ So this script uses **only** what Debian ships in apt, and **zero** plugins that
 have to be downloaded. Everything is either built into zsh/tmux or a package
 `apt` already knows about. First shell start is instant and nothing phones home.
 
+If you *do* want the fancy tools, they're available as an **opt-in** — see "Rich
+mode" at the end. The point is that the *default* stays lean and offline, and you
+choose to add weight, rather than having it forced on you.
+
 ## The zsh choices, one at a time
 
 **No framework.** Instead of oh-my-zsh, the config is ~25 lines of plain zsh.
@@ -111,11 +115,46 @@ out from `$SUDO_USER` (the account that ran `sudo`), or `$TARGET_USER` if you're
 running as root directly. The dotfiles are written into that user's home and
 owned by that user, not root, so zsh will actually read them.
 
+## Rich mode (`SHELL_RICH=1`)
+
+Run `SHELL_RICH=1 ./setup/shell.sh` (or set it before `bootstrap.sh`) and the
+script adds two popular extras on top of the lean base:
+
+- **starship** — a fancy, fast prompt that shows git status, language versions,
+  exit codes, and more. It *replaces* the built-in git prompt.
+- **atuin** — supercharged shell history: full-text search of every command you
+  have ever run, synced and stored in a database, bound to Ctrl-R.
+
+Three things to understand before you flip it on:
+
+**They are not apt packages.** Neither is in Debian, so the script installs them
+by downloading each project's official installer from the internet and running
+it — starship into `/usr/local/bin` (system-wide), atuin into the user's own
+`~/.atuin`. That means rich mode **needs internet** at setup time and asks you to
+trust those upstream installers. The lean default never does either. This is the
+whole reason it's opt-in and not the default.
+
+**The extra `~/.zshrc` lines are guarded.** They read
+`command -v starship >/dev/null && eval "$(starship init zsh)"` — meaning "only
+turn starship on if it's actually installed." So if an install ever fails or you
+remove the binary, your shell still starts fine and quietly falls back to the
+native prompt. Nothing breaks.
+
+**starship wins the prompt.** The lean config already sets a git-aware prompt;
+starship loads after it and takes over completely. That's intended — you asked
+for starship, you get starship. The native prompt is just the fallback.
+
+Everything else (zsh plugins, tmux, aliases, the shell switch) is identical to
+lean mode. Rich mode only *adds*.
+
 ## How it was checked
 
 - `shellcheck -x` clean, like every script here.
-- The generated `.zshrc` was fed to `zsh -n` (syntax check) — parses clean.
+- Both the lean and rich generated `.zshrc` files were fed to `zsh -n` (syntax
+  check) — both parse clean.
 - The generated `.tmux.conf` was loaded by a real `tmux` — parses clean.
+- Lean `--dry-run` was confirmed to mention neither starship nor atuin; rich
+  `--dry-run` was confirmed to install both and append their init lines.
 
 As with the rest of the repo, that verification ran on an amd64 box, not on the
 Pinebook itself.

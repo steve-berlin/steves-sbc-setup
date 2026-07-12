@@ -129,12 +129,20 @@ Tailscale IP — that address doesn't exist until `tailscaled` has come up.
 admitting `tailscale0` *before* `tailscale` brings the interface up, and
 `monitor` relies on that same ruleset to keep `:9100` private.
 
-**Shell config is deliberately lean, unlike the desktop repo.** `shell.sh`
-avoids oh-my-zsh/starship/atuin and the tmux plugin manager on purpose: those
-fetch from GitHub at setup time and cost startup latency on SD storage. It uses
-only apt packages (`zsh-syntax-highlighting`, `zsh-autosuggestions`) and native
-zsh/tmux features. Do not "upgrade" it to a framework — that reintroduces a
-network dependency into provisioning.
+**Shell config is deliberately lean by default, unlike the desktop repo.**
+`shell.sh`'s default path avoids oh-my-zsh/starship/atuin and the tmux plugin
+manager: those fetch from the internet at setup time and cost startup latency on
+SD storage. The default uses only apt packages (`zsh-syntax-highlighting`,
+`zsh-autosuggestions`) and native zsh/tmux features, and works offline. Do not
+make the framework path the default — that reintroduces a network dependency into
+provisioning.
+
+`SHELL_RICH=1` is the opt-in escape hatch: it installs starship (system-wide,
+via the upstream install script into `/usr/local/bin`) and atuin (into the target
+user's `~/.atuin`, `--no-modify-path`), and appends guarded init lines to
+`~/.zshrc`. The init lines use `command -v … && eval` so a missing binary never
+breaks the shell. starship overrides the native vcs_info prompt on purpose. Keep
+this path opt-in; keep the lean path offline-clean.
 
 **tmux `default-terminal` is `screen-256color`, not `tmux-256color`.** The
 latter needs `ncurses-term`, absent on minimal SBC images, and colours break

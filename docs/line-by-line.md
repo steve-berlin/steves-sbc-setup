@@ -941,6 +941,72 @@ Change the login shell to zsh — carefully, via a four-way `if`/`elif` ladder:
 5. Otherwise, `chsh -s "$zsh_bin" "$u"` sets it. It takes effect next login, which
    the final `ok` message reminds you.
 
+### `install_rich` and the `SHELL_RICH` path
+
+```bash
+	local rich=0
+	if [ "${SHELL_RICH:-0}" = 1 ]; then
+		rich=1
+	fi
+	apt_install zsh zsh-syntax-highlighting zsh-autosuggestions tmux
+	if [ "$rich" = 1 ]; then
+		install_rich "$u"
+	fi
+```
+
+`rich` is a flag set to 1 only when you export `SHELL_RICH=1`. When on, after the
+apt packages, `install_rich` fetches the two non-apt extras:
+
+```bash
+install_rich() {
+	local u="$1"
+	apt_install ca-certificates curl
+	if command -v starship >/dev/null 2>&1; then
+		ok "starship already installed"
+	else
+		run sh -c "curl -fsSL $STARSHIP_URL | sh -s -- -y -b /usr/local/bin"
+	fi
+	# shellcheck disable=SC2016
+	if runuser -u "$u" -- sh -c 'command -v atuin >/dev/null 2>&1 || [ -x "$HOME/.atuin/bin/atuin" ]'; then
+		ok "atuin already installed for $u"
+	else
+		run runuser -u "$u" -- sh -c "curl -fsSL $ATUIN_URL | sh -s -- --no-modify-path"
+	fi
+}
+```
+
+Each tool is installed only if missing (idempotent). **starship** is a single
+binary, downloaded and dropped into `/usr/local/bin` system-wide (`-y` = don't
+ask, `-b` = bin directory). **atuin** is installed *as the target user* into their
+`~/.atuin` (that's the `runuser -u "$u"`), with `--no-modify-path` because our
+`~/.zshrc` already puts `~/.atuin/bin` on PATH. The atuin check is deliberately
+single-quoted so `$HOME` expands inside the *user's* shell, not root's — that's
+what the `# shellcheck disable=SC2016` is acknowledging.
+
+The build of `~/.zshrc` then becomes a group command piped into `install_file`,
+appending a guarded init block when `rich=1`:
+
+```bash
+	{
+		cat <<'EOF'
+... lean config ...
+EOF
+		if [ "$rich" = 1 ]; then
+			cat <<'EOF'
+export PATH="$HOME/.atuin/bin:$HOME/.local/bin:$PATH"
+command -v starship >/dev/null && eval "$(starship init zsh)"
+command -v atuin >/dev/null && eval "$(atuin init zsh)"
+EOF
+		fi
+	} | install_file "$home/.zshrc" 0644 "$u:$grp"
+```
+
+The `{ ... }` groups two possible chunks of output and pipes their combined text
+into `install_file` (which reads its content from stdin). The `command -v X &&
+eval` guards mean the shell still starts even if starship or atuin isn't there —
+it just falls back to the native prompt. See `shell.md` for the offline-vs-rich
+trade-off.
+
 ---
 
 ## `setup/monitor.sh`

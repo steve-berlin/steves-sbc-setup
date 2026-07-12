@@ -40,7 +40,7 @@ SKIP="tailscale monitor" ./setup/bootstrap.sh
 | `setup/harden.sh` | sshd lockdown, kernel + network sysctl tuning (BBR, zram-aware VM), nftables default-deny firewall |
 | `setup/tailscale.sh` | Official Tailscale repo + `tailscaled`, so you can reach the box from anywhere |
 | `setup/podman.sh` | Rootless, daemonless container host with Quadlet units managed by systemd |
-| `setup/shell.sh` | zsh (apt plugins, no framework) + tmux (plugin-free) for the box's owner |
+| `setup/shell.sh` | zsh (apt plugins, no framework) + tmux (plugin-free); `SHELL_RICH=1` adds starship + atuin |
 | `setup/monitor.sh` | `prometheus-node-exporter` on `:9100`, reachable over the tailnet only |
 | `setup/backup.sh` | Encrypted, deduplicated `restic` backups on a daily systemd timer |
 | `setup/bootstrap.sh` | Runs all of the above, in dependency order |
@@ -92,7 +92,9 @@ off the public internet.
 **Login shell.** `shell.sh` switches the owner's login shell to zsh (`chsh`) and
 writes `~/.zshrc` + `~/.tmux.conf` owned by that user. It takes effect on next
 login; the old dotfiles are backed up. Set `SHELL_NO_CHSH=1` to keep your
-current shell and only drop the config files.
+current shell and only drop the config files. `SHELL_RICH=1` additionally
+installs starship + atuin — the one path here that fetches from the internet
+(they aren't in apt); the default stays offline-clean.
 
 ## Requirements
 
