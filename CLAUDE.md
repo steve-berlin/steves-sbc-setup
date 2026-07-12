@@ -45,6 +45,13 @@ kills the script. This silently broke `require_root` (never escalated) and
 `if ...; then return 0; fi`. Exception: a function invoked in an `if` condition
 has `set -e` suspended inside it — but don't rely on that.
 
+**`sh script` bypasses the shebang.** Running `sh setup/foo.sh` ignores
+`#!/usr/bin/env bash` and executes under dash, which dies on `set -o pipefail`
+and the other bashisms (arrays, `${BASH_SOURCE}`). Every entry script re-execs
+under bash via `if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi`,
+placed *before* `set -euo pipefail`. Keep that guard first; it must be plain
+POSIX so dash can parse it.
+
 **sshd drop-ins are silently ignored** unless `/etc/ssh/sshd_config` contains
 `Include /etc/ssh/sshd_config.d/*.conf`. Debian ships it; a hand-edited config
 may not. `harden.sh` hard-fails on its absence rather than writing a file that

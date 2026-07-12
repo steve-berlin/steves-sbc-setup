@@ -25,6 +25,7 @@ Every `setup/*.sh` file starts with the same four lines. Learn them once:
 
 ```bash
 #!/usr/bin/env bash
+if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 set -euo pipefail
 # shellcheck source=../lib/common.sh
 . "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
@@ -34,6 +35,15 @@ set -euo pipefail
 this first line to know *what program* should interpret it. `/usr/bin/env bash`
 means "find bash on the PATH and use it." Using `env` instead of a hard-coded
 `/bin/bash` makes it portable to systems where bash lives elsewhere.
+
+**`if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi`** — a self-defence
+guard. If someone starts the script with `sh setup/foo.sh` instead of
+`./setup/foo.sh`, the `sh` order overrides the shebang and the script runs under
+dash, which can't do `pipefail` or the bash tricks below. `$BASH_VERSION` is only
+set when bash is running, so `[ -z ... ]` ("is it empty?") detects dash and
+`exec bash "$0" "$@"` restarts the same script under bash. The line itself is
+plain POSIX so dash can read it. Written *before* `set -o pipefail` on purpose —
+it has to run before the line that would otherwise crash.
 
 **`set -euo pipefail`** — four safety switches flipped on at once. This is the
 single most important line for correctness:
