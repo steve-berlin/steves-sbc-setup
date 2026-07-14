@@ -51,7 +51,7 @@ SKIP="tailscale monitor" ./setup/bootstrap.sh
 | `setup/harden.sh` | sshd lockdown, kernel + network sysctl tuning (BBR, zram-aware VM), nftables default-deny firewall |
 | `setup/tailscale.sh` | Official Tailscale repo + `tailscaled`, so you can reach the box from anywhere |
 | `setup/podman.sh` | Rootless, daemonless container host with Quadlet units managed by systemd |
-| `setup/shell.sh` | zsh (apt plugins, no framework) + tmux (plugin-free) + btop; `SHELL_RICH=1` adds starship + atuin |
+| `setup/shell.sh` | zsh (apt plugins, no framework) + tmux (plugin-free) + btop, and a keyboard that behaves (Ctrl+arrows, Ctrl+Delete, Home/End — in zsh *and* readline); `SHELL_RICH=1` adds starship + atuin |
 | `setup/monitor.sh` | `prometheus-node-exporter` on `:9100`, reachable over the tailnet only |
 | `setup/backup.sh` | Encrypted, deduplicated `restic` backups on a daily systemd timer |
 | `setup/bootstrap.sh` | Runs all of the above, in dependency order |
@@ -62,6 +62,7 @@ them yourself:
 | Script | Does |
 |---|---|
 | `setup/wizard.sh` | Interactive front end to all of the above: asks what to provision, install and remove, seeds the config files, confirms, then runs it |
+| `setup/media.sh` | What a desktop does when you plug a USB stick in, minus the desktop: udev + `systemd-mount` auto-mount under `/media`, plus an optional `/etc/fstab` pin (`MEDIA_UUID`) for a drive a service must always find |
 | `setup/apps.sh` | Optional self-hosted apps (`APPS`, default `dfs navidrome`): [steves-domainless-filehosting](https://github.com/steve-berlin/steves-domainless-filehosting) built from source as a sandboxed service, and [Navidrome](https://www.navidrome.org/) (music server, Subsonic API) from the checksum-verified upstream `.deb` |
 | `setup/remove-xfce.sh` | Purges an XFCE desktop off a box that should be headless, and switches the boot target to console. Destructive; asks first |
 
@@ -83,6 +84,7 @@ one per script:
 - [`docs/backup.md`](docs/backup.md) — restic backups
 - [`docs/bootstrap.md`](docs/bootstrap.md) — the unattended runner, and why the stage order matters
 - [`docs/wizard.md`](docs/wizard.md) — the interactive front end
+- [`docs/media.md`](docs/media.md) — USB drives without a desktop
 - [`docs/apps.md`](docs/apps.md) — the optional apps (dfs, navidrome)
 - [`docs/remove-xfce.md`](docs/remove-xfce.md) — stripping the desktop
 - [`docs/line-by-line.md`](docs/line-by-line.md) — every function and operation, line by line

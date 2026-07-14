@@ -785,6 +785,40 @@ EOF
 
 `{ ... }` groups two possible chunks of output, pipes combined text into `install_file` (which reads content from stdin). `command -v X && eval` guards mean shell still starts even if starship or atuin missing — falls back to native prompt. See `shell.md` for offline-vs-rich trade-off.
 
+### The key bindings
+
+```bash
+bindkey '^[[3;5~' kill-word               # ctrl-delete: eat the word right
+bindkey '^[[1;5C' forward-word            # ctrl-right : next word
+bindkey '^H'      backward-kill-word      # ctrl-backspace
+```
+
+A terminal does not send "keys". It sends characters. Press Ctrl+Delete and six of them arrive: `ESC [ 3 ; 5 ~`. zsh recognises `ESC [ 3 ~` — that's plain Delete — swallows it, and the leftover `5~` is just… text, so it types it onto your line. That is the "why is my keyboard printing garbage" bug, and it is not the shell being broken: nothing ever told it what that sequence meant.
+
+Each `bindkey` line is that missing sentence. `^[` is Escape, so `'^[[3;5~'` is exactly the six characters above, mapped to `kill-word`.
+
+```bash
+if (( ${+terminfo[smkx]} && ${+terminfo[rmkx]} )); then
+	zle-line-init()   { echoti smkx }
+	zle-line-finish() { echoti rmkx }
+```
+
+Terminals have two keypad modes and send *different* sequences for Home/End in each. terminfo's key names describe the "application" mode, so the line editor flips the terminal into it while you're editing (`smkx`) and back out when you press Enter (`rmkx`). Skip this and some terminals' Home key arrives as a sequence nothing recognises — back to garbage.
+
+```bash
+WORDCHARS='*?_-.[]~&;!#$%^(){}<>'
+```
+
+zsh's default `WORDCHARS` counts `/` as an ordinary word character, so Ctrl+W on `/usr/local/bin/thing` eats the entire path. Dropping `/` from the list makes word-wise keys stop at each component.
+
+And the same map again, in `~/.inputrc`:
+
+```
+"\e[3;5~": kill-word
+```
+
+Because the `bindkey` lines only fix **zsh**. bash, the python prompt, `sqlite3`, `psql` and dozens more are built on **readline**, which reads `~/.inputrc` and ships with those same keys unbound. Two files, one keyboard.
+
 ### `configure_btop`
 
 ```bash
@@ -1305,6 +1339,77 @@ Caches are tiny on purpose: they land on the SD card, and SD cards wear out from
 The music folder is created owned by **you**, not by the service — `install -d -m 0755 -o "$owner"`. The library is the operator's; navidrome only ever reads it.
 
 Then `enable_now navidrome.service` (the `.deb` brought the unit with it), `firewall_note navidrome`, and a loud warning: **whoever loads the web page first becomes the admin.** Navidrome has no password until someone sets one. Claim it immediately.
+
+## `setup/media.sh` — USB drives, no desktop
+
+### The udev rule
+
+```
+ACTION=="add", SUBSYSTEM=="block", SUBSYSTEMS=="usb", ENV{ID_FS_USAGE}=="filesystem", RUN{program}+="/usr/local/sbin/usb-automount %E{DEVNAME}"
+```
+
+Read it as a filter: *when* a device appears (`add`), *and* it is a block device, *and* it hangs off USB, *and* it actually carries a filesystem — run this program on it. `ID_FS_USAGE=="filesystem"` is the clause that keeps the rule off swap partitions, RAID members and LVM chunks. `%E{DEVNAME}` hands over `/dev/sda1`.
+
+### Why the helper calls systemd-mount instead of mount
+
+This is the part that trips everyone. **udev's `RUN` programs execute in a private mount namespace.** Run `mount` there and it works — and then evaporates the moment the program exits, because the namespace it mounted into is thrown away. Every "my udev automount rule does nothing" question online is this one fact.
+
+So the helper hands the job to systemd, which lives in the *real* namespace:
+
+```sh
+exec systemd-mount --no-block --collect --automount=yes \
+	-o "$opts" "$dev" "/media/$name"
+```
+
+- `--automount=yes` — don't mount now; mount the first time something actually looks at the folder. A sleeping drive stays asleep.
+- `--collect` — clean the transient unit up afterwards.
+- No unmount rule anywhere, because the unit systemd creates is `BindsTo=` the device: yank the stick, systemd notices the device is gone and tears the mount down by itself.
+
+### Naming the mountpoint
+
+```sh
+name="${LABEL:-${UUID:-$(basename "$dev")}}"
+name="$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_')"
+```
+
+Prefer the drive's label (`/media/MUSIC`), fall back to UUID, fall back to the device name. Then the `tr`: `-c` means *complement* — "every character NOT in this set becomes `_`". The label was typed by whoever formatted the stick, and it is about to become part of a filesystem path. Treat it as hostile.
+
+```sh
+opts="nosuid,nodev,noatime"
+case "$TYPE" in
+	vfat|exfat|ntfs) opts="$opts,uid=$uid,gid=$gid,umask=0022" ;;
+esac
+```
+
+`nosuid,nodev` on everything: a USB stick must not be able to carry a setuid-root binary or a device node onto your box. The `uid=`/`gid=` clause is only for the Windows filesystems — vfat/exfat/ntfs store no ownership at all, so who owns the files is decided at *mount* time. Baked in as numbers, because the helper runs from udev with almost no environment.
+
+### The fstab pin
+
+```sh
+	if grep -qE "^[[:space:]]*UUID=${uuid}[[:space:]]" /etc/fstab; then
+		ok "fstab already has an entry for UUID=$uuid — left alone"
+	else
+		line="UUID=$uuid $MEDIA_MOUNT $fstype $(fstab_opts "$fstype") 0 0"
+		…
+		cp -a /etc/fstab "/etc/fstab.bak.$(date +%s)"
+		printf '\n# Managed by steves-sbc-setup (setup/media.sh)\n%s\n' "$line" >>/etc/fstab
+```
+
+Not `install_file` — `/etc/fstab` is a file *you* also own lines in, so it is appended to, never rewritten. Already there = leave alone (idempotence). Backed up first (reversibility).
+
+```sh
+	opts="nofail,x-systemd.device-timeout=5,nosuid,nodev,noatime"
+```
+
+**`nofail` is the most important word in the file.** Without it, boot the board with the drive unplugged and systemd waits for a device that is never coming. On a headless box there is no screen to tell you why it hung. `x-systemd.device-timeout=5` caps the wait at five seconds.
+
+And the check nobody remembers to do:
+
+```sh
+	findmnt --verify --verbose >/dev/null 2>&1 || warn "findmnt --verify is unhappy…"
+```
+
+A bad fstab line is a box that will not boot. Same instinct as `sshd -t` and `nft -c` elsewhere in this repo: validate *before* the thing that would leave you locked out.
 
 ## `setup/remove-xfce.sh` — the uninstaller
 

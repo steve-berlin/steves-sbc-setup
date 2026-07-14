@@ -106,10 +106,14 @@ preseed() {
 WANT=()          # stage names to run
 APPS_WANTED=()   # app names for apps.sh
 REMOVE_XFCE=0
+WANT_MEDIA=0
 TS_KEY=''
 RESTIC_REPO=''
 DFS_PUB=''
 ND_MUSIC=''
+MEDIA_ID=''
+MEDIA_AT=''
+MEDIA_READONLY=0
 RICH=0
 
 interview() {
@@ -144,6 +148,23 @@ interview() {
 		printf '  The backup timer stays disabled until a restic repository is set.\n' >&2
 		printf '  Examples: sftp:user@nas:/backups/sbc  |  /mnt/usb/restic\n' >&2
 		RESTIC_REPO="$(ask_val 'restic repository')"
+	fi
+
+	section "media"
+	printf '  Without a desktop, nothing mounts a USB stick when you plug it in.\n' >&2
+	printf '  This installs the udev + systemd rule that does, and can pin one\n' >&2
+	printf '  drive to a fixed path for a service to read.\n' >&2
+	if ask_yn 'set up USB media mounting?' n; then
+		WANT_MEDIA=1
+		lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,UUID >&2 || true
+		printf '  Leave the UUID empty for hotplug only (mounts under /media).\n' >&2
+		MEDIA_ID="$(ask_val 'UUID of a drive to pin')"
+		if [ -n "$MEDIA_ID" ]; then
+			MEDIA_AT="$(ask_val 'mount it at' /srv/music)"
+			if ask_yn 'mount it read-only (right for a library a service only reads)?' y; then
+				MEDIA_READONLY=1
+			fi
+		fi
 	fi
 
 	section "apps"
@@ -187,6 +208,7 @@ summary() {
 		printf '  stages:    %s\n' "${WANT[*]}"  >&2
 	fi
 	printf '  apps:      %s\n' "${APPS_WANTED[*]:-(none)}" >&2
+	printf '  media:     %s\n' "$([ "$WANT_MEDIA" = 1 ] && printf 'hotplug%s' "${MEDIA_ID:+ + pin $MEDIA_ID at $MEDIA_AT}" || printf '(none)')" >&2
 	printf '  remove:    %s\n' "$([ "$REMOVE_XFCE" = 1 ] && printf 'xfce' || printf '(nothing)')" >&2
 	printf '  shell:     %s\n' "$([ "$RICH" = 1 ] && printf 'rich (starship + atuin)' || printf 'lean')" >&2
 	printf '  tailscale: %s\n' "$([ -n "$TS_KEY" ] && printf 'join with auth key' || printf 'install only, join later')" >&2
@@ -239,6 +261,14 @@ EOF
 		log "──── $s ────"
 		"$SELF_DIR/$s.sh" ${args[@]+"${args[@]}"}
 	done
+
+	# Media before apps: navidrome's library should already be mounted when the
+	# scanner first runs, or it indexes an empty folder.
+	if [ "$WANT_MEDIA" = 1 ]; then
+		log "──── media ────"
+		MEDIA_UUID="$MEDIA_ID" MEDIA_MOUNT="${MEDIA_AT:-/srv/music}" MEDIA_RO="$MEDIA_READONLY" \
+			"$SELF_DIR/media.sh" ${args[@]+"${args[@]}"}
+	fi
 
 	if [ "${#APPS_WANTED[@]}" -gt 0 ]; then
 		log "──── apps ────"

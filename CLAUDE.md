@@ -22,6 +22,7 @@ setup/backup.sh    restic + systemd timer
 setup/bootstrap.sh runs all stages in order (unattended path)
 setup/wizard.sh    interactive front end: prompts, seeds config, runs the rest
 setup/apps.sh      optional self-hosted apps (dfs, navidrome) — NOT in bootstrap
+setup/media.sh     USB automount (udev + systemd-mount) + optional fstab pin
 setup/remove-xfce.sh  purge XFCE desktop — NOT in bootstrap, destructive
 docs/              plain-language, per-script explanations (docs/shell.md, …)
 ```
@@ -219,6 +220,32 @@ warns loudly. Config `/etc/navidrome/navidrome.toml` is a dpkg conffile —
 capped small (50/100 MB) because they land on eMMC/SD. `/srv/music` is owned by
 `target_user`, not by the service: the library is the operator's, and navidrome
 only reads it.
+
+**udev cannot mount anything.** Its `RUN` programs execute in a private mount
+namespace, so a `mount` there succeeds and then evaporates — the classic
+"my udev automount rule does nothing" trap. `media.sh` therefore has udev call
+`systemd-mount --automount=yes --collect`, which creates a transient unit in the
+real namespace. No unmount rule is needed: the unit is `BindsTo=` the device, so
+unplugging tears it down. Mountpoints are named from `ID_FS_LABEL`, which is
+attacker-supplied text landing in a path — everything outside `[A-Za-z0-9._-]` is
+squashed to `_`. `nosuid,nodev` on every automount: a USB stick must not be able
+to carry a setuid root binary onto the box.
+
+**`nofail` in fstab is not optional on a headless board.** Without it, booting with
+the drive unplugged blocks on a device that never appears, and there is no screen
+to explain why. Pinned entries always carry `nofail,x-systemd.device-timeout=5`,
+are keyed by UUID (device names shuffle between boots), and `findmnt --verify` runs
+before the box gets a chance to reboot into a broken fstab.
+
+**Terminals send character sequences, not keys.** Ctrl+Delete arrives as
+`ESC [ 3 ; 5 ~`; zsh matches the `ESC [ 3 ~` prefix, and the leftover `5~` is typed
+onto the line — the "why does my keyboard print garbage" bug. `shell.sh` binds the
+sequences in *two* places, and both are needed: `~/.zshrc` (`bindkey`) fixes zsh,
+`~/.inputrc` fixes every readline program (bash, python, psql). The `smkx`/`rmkx`
+hook is load-bearing — terminfo's key names are only valid in application keypad
+mode, and without the flip some terminals' Home/End arrive unrecognised. Do NOT set
+tmux's `xterm-keys`: it is deprecated/removed in newer tmux, and `CSI 3;5~` passes
+through untouched anyway.
 
 **`remove-xfce.sh` is the only destructive script here** — `apt purge` takes config
 with it, and there is no undo. Hence: not in `bootstrap.sh`, prompts before acting

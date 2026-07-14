@@ -53,6 +53,34 @@ steve@sbc:~/steves-sbc-setup (main)%
 
 **Mouse on, big scrollback, intuitive splits.** Quality-of-life: click between panes, scroll with wheel; 50,000 lines of history kept; `|` / `-` split window vertically / horizontally, new pane open in *same folder* you were in.
 
+## The keyboard
+
+Press Ctrl+Delete in fresh shell: you expect word to right disappear. Instead you get `5~` typed onto line. Ctrl+Left do nothing, or print garbage. Feel broken. Is broken — but not shell's fault.
+
+**Terminal not send "keys". It send characters.** Ctrl+Delete arrive as six characters: `ESC [ 3 ; 5 ~`. Shell recognise `ESC [ 3 ~` (plain Delete) and swallow it, then remaining `5~` is… just text. So it print it.
+
+Fix = tell line editor what each sequence mean. Script now do that, in two places, because one is not enough:
+
+- **`~/.zshrc`** — `bindkey` lines. Fix zsh.
+- **`~/.inputrc`** — same map, readline's syntax. Fix *everything else*: bash, python prompt, sqlite3, psql, dozens of programs that all use readline library and all ship with same keys unbound.
+
+What you get:
+
+| Key | Does |
+|---|---|
+| Ctrl+Left / Ctrl+Right | jump word left / right |
+| Ctrl+Delete | delete word to right |
+| Ctrl+Backspace | delete word to left |
+| Home / End | start / end of line |
+| Up / Down | search history for what you already typed, not blind walk |
+| Shift+Tab | cycle completions backwards |
+
+Two extra details worth knowing:
+
+**Application keypad mode (`smkx`).** Terminal have two modes, and send *different* sequences for Home/End in each. zsh's `zle-line-init` hook flip terminal into mode terminfo describe, while you editing line. Without it, some terminals' Home key arrive as sequence nothing recognise — and you back to garbage.
+
+**`WORDCHARS`.** zsh count `/` as part of word by default, so Ctrl+W on `/usr/local/bin/thing` eat whole path. Script drop `/` from list. Now word-keys stop at each path component, which is what you meant.
+
 ## The login-shell switch
 
 Installing zsh not make it *your* shell — you still land in old one every login. Script run `chsh` to change default shell to zsh. Idempotent (check first, skip if done) and reversible (`chsh` back any time). Don't want it touched? Run with `SHELL_NO_CHSH=1`.

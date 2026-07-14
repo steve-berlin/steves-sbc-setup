@@ -181,6 +181,50 @@ setopt AUTO_CD
 
 bindkey -e   # emacs keys: what every SSH client expects by default
 
+# --- keys ------------------------------------------------------------------
+# A terminal sends escape sequences, not "keys": Ctrl-Delete arrives as the six
+# characters ESC [ 3 ; 5 ~ . Nothing binds those by default, so zsh prints the
+# leftovers ("5~") instead of deleting a word. Every line below maps one such
+# sequence to the edit it should perform.
+#
+# smkx/rmkx put the terminal in "application keypad" mode while the line editor
+# is running, which is the mode terminfo's key names are defined for — without
+# it, Home/End can arrive as a sequence nothing recognises.
+if (( ${+terminfo[smkx]} && ${+terminfo[rmkx]} )); then
+	zle-line-init()   { echoti smkx }
+	zle-line-finish() { echoti rmkx }
+	zle -N zle-line-init
+	zle -N zle-line-finish
+fi
+
+bindkey '^[[1;5C' forward-word            # ctrl-right : next word
+bindkey '^[[1;5D' backward-word           # ctrl-left  : previous word
+bindkey '^[[1;3C' forward-word            # alt-right  (same, other terminals)
+bindkey '^[[1;3D' backward-word           # alt-left
+bindkey '^[Oc'    forward-word            # rxvt
+bindkey '^[Od'    backward-word           # rxvt
+bindkey '^[[3~'   delete-char             # delete     : eat the character right
+bindkey '^[[3;5~' kill-word               # ctrl-delete: eat the word right
+bindkey '^H'      backward-kill-word      # ctrl-backspace (most terminals)
+bindkey '^[^?'    backward-kill-word      # alt-backspace
+bindkey '^[[H'    beginning-of-line       # home
+bindkey '^[[F'    end-of-line             # end
+bindkey '^[[1~'   beginning-of-line       # home, on the linux console / rxvt
+bindkey '^[[4~'   end-of-line             # end, likewise
+bindkey '^[[Z'    reverse-menu-complete   # shift-tab: cycle completions backwards
+
+# Up/Down search history for what you have already typed, instead of walking
+# through every command blindly.
+autoload -Uz up-line-or-beginning-search down-line-or-beginning-search
+zle -N up-line-or-beginning-search
+zle -N down-line-or-beginning-search
+bindkey '^[[A' up-line-or-beginning-search
+bindkey '^[[B' down-line-or-beginning-search
+
+# Default WORDCHARS counts '/' as part of a word, so ctrl-w on a long path eats
+# the whole thing. Drop it (and '=') and word-wise keys stop at each component.
+WORDCHARS='*?_-.[]~&;!#$%^(){}<>'
+
 # --- prompt: git-aware, built from vcs_info so it needs no external binary ---
 autoload -Uz vcs_info
 zstyle ':vcs_info:git:*' formats ' (%b)'
@@ -213,6 +257,37 @@ source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh 2>/dev/null
 source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh 2>/dev/null
 EOF
 	} | install_file "$home/.zshrc" 0644 "$u:$grp"
+
+	# --- ~/.inputrc ---------------------------------------------------------
+	# zsh's bindkeys only fix zsh. Everything built on readline — bash, the
+	# python/sqlite/psql prompts, dozens of others — reads this file instead,
+	# and ships with the same keys unbound. Same mappings, readline's syntax.
+	install_file "$home/.inputrc" 0644 "$u:$grp" <<'EOF'
+# ~/.inputrc — managed by steves-sbc-setup (setup/shell.sh)
+# Key fixes for every readline program (bash, python, psql, …).
+
+"\e[1;5C": forward-word            # ctrl-right
+"\e[1;5D": backward-word           # ctrl-left
+"\e[1;3C": forward-word            # alt-right
+"\e[1;3D": backward-word           # alt-left
+"\e[3~":   delete-char             # delete
+"\e[3;5~": kill-word               # ctrl-delete: kill the word to the right
+"\C-h":    backward-kill-word      # ctrl-backspace
+"\e\C-?":  backward-kill-word      # alt-backspace
+"\e[H":    beginning-of-line       # home
+"\e[F":    end-of-line             # end
+"\e[1~":   beginning-of-line       # home, linux console / rxvt
+"\e[4~":   end-of-line             # end, likewise
+"\e[5~":   history-search-backward # page-up: search history by prefix
+"\e[6~":   history-search-forward  # page-down
+
+set completion-ignore-case on
+set show-all-if-ambiguous on
+set colored-stats on
+# Pasted text is inserted literally, not executed line by line — a newline in
+# the clipboard should not run a command you never read.
+set enable-bracketed-paste on
+EOF
 
 	# --- ~/.tmux.conf -------------------------------------------------------
 	# Native config, zero plugins: the one feature that actually matters on a
