@@ -15,6 +15,17 @@ package comes from apt. Only Tailscale adds a third-party repository.
 git clone https://github.com/steve-berlin/steves-sbc-setup
 cd steves-sbc-setup
 
+./setup/wizard.sh                # ask what to install, configure and remove
+```
+
+The wizard walks through every script, collects the settings each one needs
+(Tailscale key, restic repository, dfs address), shows the whole plan, and
+applies nothing until you confirm.
+
+Prefer it unattended? `bootstrap.sh` runs the provisioning stages straight
+through, no questions:
+
+```sh
 ./setup/bootstrap.sh --dry-run   # print every change, touch nothing
 ./setup/bootstrap.sh             # apply
 ```
@@ -40,16 +51,17 @@ SKIP="tailscale monitor" ./setup/bootstrap.sh
 | `setup/harden.sh` | sshd lockdown, kernel + network sysctl tuning (BBR, zram-aware VM), nftables default-deny firewall |
 | `setup/tailscale.sh` | Official Tailscale repo + `tailscaled`, so you can reach the box from anywhere |
 | `setup/podman.sh` | Rootless, daemonless container host with Quadlet units managed by systemd |
-| `setup/shell.sh` | zsh (apt plugins, no framework) + tmux (plugin-free); `SHELL_RICH=1` adds starship + atuin |
+| `setup/shell.sh` | zsh (apt plugins, no framework) + tmux (plugin-free) + btop; `SHELL_RICH=1` adds starship + atuin |
 | `setup/monitor.sh` | `prometheus-node-exporter` on `:9100`, reachable over the tailnet only |
 | `setup/backup.sh` | Encrypted, deduplicated `restic` backups on a daily systemd timer |
 | `setup/bootstrap.sh` | Runs all of the above, in dependency order |
 
-Two more scripts are **not** part of `bootstrap.sh` — run them yourself when you
-want them:
+Three more scripts sit outside `bootstrap.sh` — the wizard offers them, or run
+them yourself:
 
 | Script | Does |
 |---|---|
+| `setup/wizard.sh` | Interactive front end to all of the above: asks what to provision, install and remove, seeds the config files, confirms, then runs it |
 | `setup/apps.sh` | Optional self-hosted apps (`APPS`, default `dfs navidrome`): [steves-domainless-filehosting](https://github.com/steve-berlin/steves-domainless-filehosting) built from source as a sandboxed service, and [Navidrome](https://www.navidrome.org/) (music server, Subsonic API) from the checksum-verified upstream `.deb` |
 | `setup/remove-xfce.sh` | Purges an XFCE desktop off a box that should be headless, and switches the boot target to console. Destructive; asks first |
 
@@ -68,7 +80,8 @@ one per stage:
 - [`docs/shell.md`](docs/shell.md) — zsh + tmux
 - [`docs/monitor.md`](docs/monitor.md) — node_exporter metrics
 - [`docs/backup.md`](docs/backup.md) — restic backups
-- [`docs/apps.md`](docs/apps.md) — the optional app host (dfs)
+- [`docs/wizard.md`](docs/wizard.md) — the interactive front end
+- [`docs/apps.md`](docs/apps.md) — the optional apps (dfs, navidrome)
 - [`docs/remove-xfce.md`](docs/remove-xfce.md) — stripping the desktop
 - [`docs/line-by-line.md`](docs/line-by-line.md) — every function and operation, line by line
 
@@ -100,7 +113,9 @@ anything arriving on `tailscale0`. `monitor.sh` depends on this to keep `:9100`
 off the public internet.
 
 **Login shell.** `shell.sh` switches the owner's login shell to zsh (`chsh`) and
-writes `~/.zshrc` + `~/.tmux.conf` owned by that user. It takes effect on next
+writes `~/.zshrc`, `~/.tmux.conf` and a seed `~/.config/btop/btop.conf` owned by
+that user (btop rewrites its own config, so that one is written once and then
+left alone). It takes effect on next
 login; the old dotfiles are backed up. Set `SHELL_NO_CHSH=1` to keep your
 current shell and only drop the config files. `SHELL_RICH=1` additionally
 installs starship + atuin — the one path here that fetches from the internet

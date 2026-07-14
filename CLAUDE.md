@@ -16,10 +16,11 @@ setup/base.sh      packages, chrony, zram, unattended-upgrades
 setup/harden.sh    sshd, sysctl, nftables
 setup/tailscale.sh mesh VPN
 setup/podman.sh    rootless containers + Quadlet
-setup/shell.sh     zsh + tmux for the box's owner
+setup/shell.sh     zsh + tmux + btop for the box's owner
 setup/monitor.sh   prometheus-node-exporter
 setup/backup.sh    restic + systemd timer
-setup/bootstrap.sh runs all stages in order
+setup/bootstrap.sh runs all stages in order (unattended path)
+setup/wizard.sh    interactive front end: prompts, seeds config, runs the rest
 setup/apps.sh      optional self-hosted apps (dfs, navidrome) — NOT in bootstrap
 setup/remove-xfce.sh  purge XFCE desktop — NOT in bootstrap, destructive
 docs/              plain-language, per-script explanations (docs/shell.md, …)
@@ -136,6 +137,15 @@ default-deny ruleset confines it to `tailscale0`. `monitor.sh` warns if no rules
 loaded. Don't "fix" by binding to the Tailscale IP — that address doesn't exist
 until `tailscaled` comes up.
 
+**`wizard.sh` seeds config *before* the stage that reads it.** `/etc/restic/env`
+and `/etc/dfs/env` are written from the answers, so `backup.sh` / `apps.sh` then
+find a configured box and enable what they would otherwise leave disabled. Seeding
+never clobbers — an existing env file is the operator's, possibly pointing at a
+live repository. The wizard does **not** pass `XFCE_YES=1` to `remove-xfce.sh`:
+one "yes" in the plan should not disarm both the remover's own prompt and its
+graphical-session guard. It also does not need `SUDO_KEEP` — it re-execs under
+sudo itself, so children inherit plain exported variables.
+
 **Stage order in `bootstrap.sh` is load-bearing.** `harden` installs the rule
 admitting `tailscale0` *before* `tailscale` brings the interface up, and `monitor`
 relies on that same ruleset to keep `:9100` private.
@@ -152,6 +162,15 @@ install script into `/usr/local/bin`) and atuin (into target user's `~/.atuin`,
 `--no-modify-path`), appends guarded init lines to `~/.zshrc`. Init lines use
 `command -v … && eval` so a missing binary never breaks the shell. starship
 overrides native vcs_info prompt on purpose. Keep path opt-in; keep lean path
+offline-clean.
+
+**btop config is seeded, not managed.** btop rewrites `~/.config/btop/btop.conf`
+itself when it exits, so `install_file` would "restore" it on every re-run and pile
+up `.bak` files. `configure_btop` writes it only when absent. Defaults are tuned
+down (`update_ms = 2000`, no GPU box): btop refreshes 10×/s out of the box, which
+is real CPU on an A64 when it lives in a tmux pane all day. btop belongs in
+`shell.sh`, not `apps.sh` — apps.sh is for *services* (unit, user, port, firewall
+note); btop is an apt-only interactive tool, and the lean shell path stays
 offline-clean.
 
 **tmux `default-terminal` is `screen-256color`, not `tmux-256color`.** Latter needs

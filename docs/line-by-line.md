@@ -785,6 +785,26 @@ EOF
 
 `{ ... }` groups two possible chunks of output, pipes combined text into `install_file` (which reads content from stdin). `command -v X && eval` guards mean shell still starts even if starship or atuin missing — falls back to native prompt. See `shell.md` for offline-vs-rich trade-off.
 
+### `configure_btop`
+
+```bash
+	if [ -e "$conf" ]; then
+		ok "exists, left alone: $conf"
+		return 0
+	fi
+```
+
+Every other dotfile here is *managed*: script owns it, rewrites it, backs up what it replaced. btop's config is different, because **btop rewrites the file itself** when you quit it (it remembers which boxes you had open). Manage that and every re-run of `shell.sh` would see a "changed" file, back it up, and stamp its own version back — a pile of `.bak` files and your settings thrown away. So: write once, never again.
+
+Contents tuned down:
+
+```
+update_ms = 2000
+shown_boxes = "cpu mem net proc"
+```
+
+btop redraws ten times a second by default. Pretty on a desktop; on an A64 with btop parked in a tmux pane all day, that's real CPU spent drawing a picture nobody is looking at. Two seconds is plenty. GPU box left out of `shown_boxes` — SBC has no GPU worth watching.
+
 ---
 
 ## `setup/monitor.sh`
@@ -1019,6 +1039,83 @@ EOF
 ```
 
 Announce completion. Rehearsal: stop here. Real run: print manual follow-ups scripts *deliberately* don't do for you: log in to Tailscale, copy restic key somewhere safe, set backup destination, finish SSH lockdown once key in place. These steps need human decision or browser — automation takes you right up to them, no further.
+
+---
+
+## `setup/wizard.sh` — the interactive front end
+
+`bootstrap.sh` is for machines. This one is for people: it asks, then does. Same stage scripts underneath — the wizard just fills in the environment variables you would otherwise have had to remember.
+
+### Asking
+
+```bash
+ask_yn() {
+	local q="$1" def="$2" reply hint='[y/N]'
+	if [ "$def" = y ]; then hint='[Y/n]'; fi
+	printf '  %s %s ' "$q" "$hint" >&2
+	read -r reply
+	if [ -z "$reply" ]; then reply="$def"; fi
+	case "$reply" in
+		y|Y|yes|YES) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+```
+
+Question printed to **stderr**, answer read from the terminal. Why stderr? Same reason every log line in this repo goes there: stdout stays clean, so you could pipe the script's output somewhere without the questions ending up in the pipe. Empty answer = the default (the capital letter in `[Y/n]`). Anything that isn't clearly yes counts as no.
+
+`ask_val` is the same idea for text (`[default]` shown in brackets). `ask_secret` uses `read -rs` — the `s` means "don't echo" — so a Tailscale auth key never appears on screen or in the scrollback of a shared terminal. Addresses and paths are echoed; they aren't secrets.
+
+### Collect, then show, then do
+
+`interview` fills in variables (`WANT`, `APPS_WANTED`, `TS_KEY`, `RESTIC_REPO`…) and runs *nothing*. `summary` prints the whole plan. Only after you confirm does `apply` run. Say no and the script `die`s with "aborted — nothing was changed", which is literally true: at that point not one file has been touched.
+
+### Seeding config before the stage that reads it
+
+```bash
+	if [ -n "$RESTIC_REPO" ]; then
+		preseed /etc/restic/env 0600 <<EOF
+RESTIC_REPOSITORY=$RESTIC_REPO
+…
+EOF
+	fi
+```
+
+This is the trick that makes the wizard worth having. `backup.sh` refuses to enable its timer while the repository is empty; `apps.sh` refuses to start dfs while its public address is empty. Normally that means: run script, edit file, run script again. The wizard asked you up front, so it writes the config file *first* — and the stage then finds a configured box and turns the thing on the first time.
+
+`preseed` refuses to overwrite an existing file, warning that your answer wasn't used. That file could be pointing at a *live* backup repository; silently replacing it is how backups get lost. Config = the operator's, always.
+
+### Running the children
+
+```bash
+	export SHELL_RICH="$RICH"
+	…
+	for s in ${WANT[@]+"${WANT[@]}"}; do
+		"$SELF_DIR/$s.sh" ${args[@]+"${args[@]}"}
+	done
+```
+
+Plain `export` is enough here — the wizard already re-exec'd itself under sudo, so the children start as root and inherit the environment normally. (The `SUDO_KEEP` list in `common.sh` exists for the *other* direction: a script you launch as a normal user, which then jumps through sudo and would otherwise lose its variables.)
+
+### The guard it deliberately doesn't disarm
+
+```bash
+	# Deliberately NOT passing XFCE_YES: the remover asks for itself and refuses
+	# inside a graphical session.
+	if [ "$REMOVE_XFCE" = 1 ]; then
+		"$SELF_DIR/remove-xfce.sh" ${args[@]+"${args[@]}"}
+	fi
+```
+
+You said yes in the plan. The remover asks *again* anyway, and still refuses to run from inside a graphical session. Deliberate: one `y` buried in a list of twelve questions shouldn't disarm both safety guards on the only irreversible thing in the repo. Pressing `y` twice is cheap. Purging a desktop you meant to keep is not.
+
+### No terminal, no wizard
+
+```bash
+	[ -t 0 ] || die "wizard needs a terminal — for unattended runs use bootstrap.sh"
+```
+
+`-t 0` = "is stdin a terminal?" Run from cron with no keyboard, every `read` returns empty instantly, every question takes its default, and the box installs whatever the defaults happen to be. Refuse instead. Unattended has its own front door: `bootstrap.sh` plus environment variables.
 
 ---
 
