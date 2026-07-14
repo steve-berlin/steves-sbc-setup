@@ -98,22 +98,104 @@ dfs_sync_source() {
 	git -C "$DFS_SRC" rev-parse HEAD 2>/dev/null || true
 }
 
-# Build with the distro Go. dfs pins a newer language version in go.mod than
-# Debian ships, so GOTOOLCHAIN=auto is load-bearing: it lets the toolchain fetch
-# the exact Go it needs instead of failing. -p 2 caps compiler parallelism —
-# the default (one job per core) can OOM a 2 GB board.
+# --- the Go toolchain -------------------------------------------------------
+# dfs's go.mod pins a newer language version than Debian ships. Go >= 1.21 solves
+# that itself (GOTOOLCHAIN=auto downloads the exact toolchain go.mod asks for),
+# but bookworm ships 1.19, which has neither GOTOOLCHAIN nor the `go -C` flag and
+# simply refuses to build. So: use the distro Go when it is new enough, and
+# otherwise install the upstream tarball into /usr/local/go.
+GO_MIN=1.21
+GO_PREFIX=/usr/local/go
+
+go_cmd() {
+	if [ -x "$GO_PREFIX/bin/go" ]; then
+		printf '%s' "$GO_PREFIX/bin/go"
+	else
+		command -v go 2>/dev/null || true
+	fi
+}
+
+# True when a Go new enough to bootstrap its own toolchain is on the box.
+go_usable() {
+	local g v
+	g="$(go_cmd)"
+	[ -n "$g" ] || return 1
+	v="$("$g" env GOVERSION 2>/dev/null | sed 's/^go//')"
+	[ -n "$v" ] || return 1
+	dpkg --compare-versions "$v" ge "$GO_MIN"
+}
+
+# Go's own arch names, which are not Debian's.
+go_asset_arch() {
+	case "$(arch)" in
+		amd64) printf 'amd64' ;;
+		arm64) printf 'arm64' ;;
+		armhf) printf 'armv6l' ;;
+		i386)  printf '386' ;;
+		*)     die "no upstream Go build for architecture $(arch)" ;;
+	esac
+}
+
+install_go_upstream() {
+	local ver tar sum tmp
+	ver="$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -n1)"
+	[ -n "$ver" ] || die "could not resolve the latest Go version"
+	tar="${ver}.linux-$(go_asset_arch).tar.gz"
+
+	log "no Go >= $GO_MIN on the box — installing $ver into $GO_PREFIX"
+	if [ "$DRY_RUN" = 1 ]; then
+		warn "[dry] would download, verify and unpack $tar"
+		return 0
+	fi
+
+	# The .sha256 URLs serve HTML, so take the hash from the release index.
+	sum="$(curl -fsSL 'https://go.dev/dl/?mode=json' |
+		grep -A4 "\"filename\": \"$tar\"" |
+		sed -n 's/.*"sha256": "\([0-9a-f]\{64\}\)".*/\1/p' | head -n1)"
+	[ -n "$sum" ] || die "no published sha256 for $tar"
+
+	tmp="$(mktemp -d)"
+	curl -fsSL --retry 3 -o "$tmp/$tar" "https://go.dev/dl/$tar"
+	printf '%s  %s\n' "$sum" "$tmp/$tar" | sha256sum -c - ||
+		die "checksum mismatch for $tar — refusing to install"
+	rm -rf "$GO_PREFIX"
+	tar -C /usr/local -xzf "$tmp/$tar"
+	rm -rf "$tmp"
+	ok "installed $ver at $GO_PREFIX"
+}
+
+ensure_go() {
+	if go_usable; then
+		ok "Go toolchain usable: $(go_cmd)"
+		return 0
+	fi
+	apt_install golang-go
+	if go_usable; then
+		ok "distro Go is new enough: $(go_cmd)"
+		return 0
+	fi
+	install_go_upstream
+}
+
+# GOTOOLCHAIN=auto lets Go fetch the toolchain go.mod pins. -p 2 caps compiler
+# parallelism — the default (one job per core) can OOM a 2 GB board. The build
+# runs in a subshell that cd's into the source: `go -C` would be shorter but
+# needs Go >= 1.20, and the whole point here is to survive an older one.
 dfs_build() {
-	local commit="$1"
+	local commit="$1" go
 	if [ -x "$DFS_BIN" ] && [ -f "$DFS_STAMP" ] && [ "$(cat "$DFS_STAMP")" = "$commit" ] && [ -n "$commit" ]; then
 		ok "dfs already built at $commit"
 		return 0
 	fi
+	go="$(go_cmd)"
 	log "building dfs (this takes a few minutes on an SBC)"
-	run env GOTOOLCHAIN=auto GOCACHE=/var/cache/go-build GOPATH=/var/lib/go HOME=/root \
-		go -C "$DFS_SRC" build -p 2 -trimpath -ldflags '-s -w' -o "$DFS_BIN" .
 	if [ "$DRY_RUN" = 1 ]; then
+		warn "[dry] would build: cd $DFS_SRC && ${go:-go} build -p 2 -trimpath -o $DFS_BIN ."
 		return 0
 	fi
+	[ -n "$go" ] || die "no Go toolchain found after ensure_go"
+	( cd "$DFS_SRC" && env GOTOOLCHAIN=auto GOCACHE=/var/cache/go-build GOPATH=/var/lib/go HOME=/root \
+		"$go" build -p 2 -trimpath -ldflags '-s -w' -o "$DFS_BIN" . )
 	printf '%s\n' "$commit" >"$DFS_STAMP"
 	ok "built $DFS_BIN ($commit)"
 }
@@ -185,7 +267,8 @@ dfs_configured() {
 
 install_dfs() {
 	local commit
-	apt_install git golang-go ca-certificates
+	apt_install git curl ca-certificates
+	ensure_go
 	commit="$(dfs_sync_source)"
 	dfs_build "$commit"
 	dfs_account

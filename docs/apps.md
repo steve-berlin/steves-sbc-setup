@@ -26,9 +26,10 @@ Bootstrap = things every box want. App = thing *you* want. Also: building it nee
 
 dfs pure Go, standard library only, no dependencies. Result single static binary — copy it anywhere, it run. No apt package exist, so script clone repo, compile, drop binary in `/usr/local/bin/dfs`.
 
-Three build details load-bearing:
+Four build details load-bearing:
 
-- **`GOTOOLCHAIN=auto`.** dfs's `go.mod` want newer Go than Debian ship. `auto` = Go fetch exact toolchain it need. Without it: hard error, refuse to build.
+- **Go must be new enough, and often isn't.** dfs's `go.mod` ask for newer Go than Debian ship. Go **1.21 and up** solve that themselves: `GOTOOLCHAIN=auto` make them download exact toolchain `go.mod` name. Older Go can't — bookworm ship **1.19**, which have no `GOTOOLCHAIN` at all, and just refuse. So script check version first (`go_usable`), try apt, and if that still too old, install upstream Go tarball into `/usr/local/go` — downloaded, sha256 checked against Go's own release index, unpacked.
+- **No `go -C`.** Shorter way to say "build in that folder" is `go -C dir build` — but that flag arrive in Go 1.20, and older Go answer `flag provided but not defined: -C`. Script `cd` in subshell instead. Works on every Go.
 - **`-p 2`.** Go compile one file per CPU core by default. Four compilers on 2 GB board = out of memory. Cap at two.
 - **Commit stamp.** After build, script save commit hash it built. Re-run: hash same and binary there = skip build. Compiling on Pinebook is minutes; skipping matter.
 

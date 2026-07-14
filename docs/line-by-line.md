@@ -1159,21 +1159,56 @@ First run: clone. Later runs: fetch newest commit, jump to it. `--depth 1` = "on
 		ok "dfs already built at $commit"
 		return 0
 	fi
-	run env GOTOOLCHAIN=auto GOCACHE=/var/cache/go-build GOPATH=/var/lib/go HOME=/root \
-		go -C "$DFS_SRC" build -p 2 -trimpath -ldflags '-s -w' -o "$DFS_BIN" .
-	...
+	( cd "$DFS_SRC" && env GOTOOLCHAIN=auto GOCACHE=/var/cache/go-build GOPATH=/var/lib/go HOME=/root \
+		"$go" build -p 2 -trimpath -ldflags '-s -w' -o "$DFS_BIN" . )
 	printf '%s\n' "$commit" >"$DFS_STAMP"
 ```
 
 Idempotence trick: after each build, write the commit hash into a stamp file. Next run, if binary exists *and* stamp matches the commit we just checked out, skip the build. Nothing changed = nothing to compile, and compiling Go on a Pinebook is minutes, not seconds.
 
-Three build knobs earn their place:
+The build knobs:
 
-- **`GOTOOLCHAIN=auto`** — dfs's `go.mod` asks for a newer Go than Debian ships. `auto` lets Go download exactly the toolchain it needs. Without it: hard error, "requires go >= 1.26".
+- **`( cd … && … )`** — the round brackets run the `cd` in a *subshell*, so the rest of the script never moves. Go has a shorter way to say this (`go -C dir build`), but that flag only arrived in Go 1.20; on an older Go it dies with `flag provided but not defined: -C`. Which is exactly what happened on a real box, hence the subshell.
+- **`GOTOOLCHAIN=auto`** — dfs's `go.mod` asks for a newer Go than Debian ships. `auto` lets Go download exactly the toolchain it needs. Only works on Go >= 1.21 — see `ensure_go` below.
 - **`-p 2`** — compile at most 2 files at once. Default = one job per CPU core, and four parallel Go compilers on a 2 GB board runs it out of memory.
 - **`-trimpath -ldflags '-s -w'`** — strip build paths and debug symbols. Smaller binary, and no `/usr/local/src/...` strings baked in.
 
 `GOCACHE` / `GOPATH` / `HOME` pinned because we're root under sudo, and Go otherwise scatters caches wherever `HOME` happens to point.
+
+### `ensure_go` — the toolchain problem
+
+Debian bookworm ships **Go 1.19**. dfs's `go.mod` asks for 1.26. Old Go can't fetch a new one (`GOTOOLCHAIN` was added in 1.21), so on that box the build simply cannot happen — no flag rescues it.
+
+```bash
+go_usable() {
+	local g v
+	g="$(go_cmd)"
+	[ -n "$g" ] || return 1
+	v="$("$g" env GOVERSION 2>/dev/null | sed 's/^go//')"
+	[ -n "$v" ] || return 1
+	dpkg --compare-versions "$v" ge "$GO_MIN"
+}
+```
+
+Ask Go itself what version it is (`go env GOVERSION` prints `go1.26.5`; strip the `go`), then let `dpkg --compare-versions` do the comparing — version strings are not numbers, and `1.9 > 1.19` if you compare them as text.
+
+`ensure_go` then walks a ladder: usable Go already there? Use it. No? `apt install golang-go` and look again — on a current Debian that's enough. Still too old? Fall back to upstream:
+
+```bash
+	ver="$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -n1)"
+	tar="${ver}.linux-$(go_asset_arch).tar.gz"
+	sum="$(curl -fsSL 'https://go.dev/dl/?mode=json' |
+		grep -A4 "\"filename\": \"$tar\"" |
+		sed -n 's/.*"sha256": "\([0-9a-f]\{64\}\)".*/\1/p' | head -n1)"
+	…
+	printf '%s  %s\n' "$sum" "$tmp/$tar" | sha256sum -c - || die "checksum mismatch…"
+	rm -rf "$GO_PREFIX"
+	tar -C /usr/local -xzf "$tmp/$tar"
+```
+
+Ask Go's website for the latest version, download that tarball, and check its fingerprint against the one Go publishes in its release index. (The obvious `…tar.gz.sha256` URL serves a *web page*, not a hash — so the hash comes out of the JSON index instead. Same trap as Navidrome's checksum file, found the same way: by actually looking.) Mismatch = `die`. `go_asset_arch` maps Debian's names onto Go's: `armhf` is `armv6l` over there.
+
+Result lands in `/usr/local/go`, and `go_cmd` prefers it over anything on `PATH`.
 
 ### `dfs_account`, `dfs_config`, `dfs_unit`
 

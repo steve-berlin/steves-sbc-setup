@@ -186,12 +186,16 @@ highlighting last.
 user, not root — root-owned `.zshrc` is ignored by zsh. Owner is `target_user`
 (`$SUDO_USER`/`$TARGET_USER`), same as podman.sh.
 
-**`apps.sh` builds dfs from source, and three build flags are load-bearing.**
-`GOTOOLCHAIN=auto` — dfs's `go.mod` pins a newer Go than Debian ships; without it
-the build hard-fails instead of fetching the toolchain. `-p 2` — Go's default of
-one compiler per core OOMs a 2 GB board. Commit stamp (`/usr/local/src/.dfs-built`)
-— rebuild only when the checked-out commit changed; a full Go build on a Pinebook
-is minutes.
+**`apps.sh` builds dfs from source; the Go toolchain is the whole problem.**
+dfs's `go.mod` pins a newer Go than Debian ships. Go >= 1.21 fixes that itself
+(`GOTOOLCHAIN=auto` fetches the pinned toolchain), but **bookworm ships 1.19**,
+which has neither `GOTOOLCHAIN` nor `go -C` and fails with `flag provided but not
+defined: -C`. So `ensure_go` checks `go env GOVERSION` against `GO_MIN=1.21`, tries
+apt, and otherwise installs the upstream tarball into `/usr/local/go` (sha256 taken
+from `https://go.dev/dl/?mode=json` — the `.sha256` URLs serve HTML, not a hash).
+Never use `go -C`; `cd` in a subshell instead. `-p 2` — Go's default of one compiler
+per core OOMs a 2 GB board. Commit stamp (`/usr/local/src/.dfs-built`) — rebuild
+only when the checked-out commit changed; a full Go build on a Pinebook is minutes.
 
 `dfs.service` stays **disabled** until `DFS_PUBLIC` is set in `/etc/dfs/env`
 (grepped, not sourced — same reason as restic). That value is the address users
