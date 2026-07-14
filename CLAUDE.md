@@ -20,6 +20,8 @@ setup/shell.sh     zsh + tmux for the box's owner
 setup/monitor.sh   prometheus-node-exporter
 setup/backup.sh    restic + systemd timer
 setup/bootstrap.sh runs all stages in order
+setup/apps.sh      optional self-hosted apps (dfs) — NOT in bootstrap
+setup/remove-xfce.sh  purge XFCE desktop — NOT in bootstrap, destructive
 docs/              plain-language, per-script explanations (docs/shell.md, …)
 ```
 
@@ -50,6 +52,19 @@ but don't rely on that.
 bashisms (arrays, `${BASH_SOURCE}`). Every entry script re-execs under bash via
 `if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi`, placed *before*
 `set -euo pipefail`. Keep guard first; must be plain POSIX so dash can parse it.
+
+**sudo scrubs the environment.** `require_root` re-execs via `exec sudo`, and sudo
+drops env vars (`sudo -E` commonly forbidden by sudoers). Every knob a script
+reads must be listed in `SUDO_KEEP` (`lib/common.sh`) or it dies at the sudo
+boundary — this silently broke `SHELL_RICH=1 ./setup/shell.sh`, which took the
+lean path and left the operator wondering where starship went. Add an env var to
+any script, add it to `SUDO_KEEP`.
+
+**starship is installed *and* configured.** Binary alone falls back to the upstream
+default preset, which probes a dozen language toolchains per prompt — slow on an
+SBC. `configure_starship` writes a user-owned `~/.config/starship.toml` with an
+explicit `format`, so unlisted modules never run. The `starship init zsh` line is
+emitted *before* the plugin sources, keeping syntax-highlighting last.
 
 **sshd drop-ins silently ignored** unless `/etc/ssh/sshd_config` contains
 `Include /etc/ssh/sshd_config.d/*.conf`. Debian ships it; hand-edited config may
@@ -151,6 +166,29 @@ highlighting last.
 (`user:group`); `shell.sh` uses it so `~/.zshrc` / `~/.tmux.conf` belong to target
 user, not root — root-owned `.zshrc` is ignored by zsh. Owner is `target_user`
 (`$SUDO_USER`/`$TARGET_USER`), same as podman.sh.
+
+**`apps.sh` builds dfs from source, and three build flags are load-bearing.**
+`GOTOOLCHAIN=auto` — dfs's `go.mod` pins a newer Go than Debian ships; without it
+the build hard-fails instead of fetching the toolchain. `-p 2` — Go's default of
+one compiler per core OOMs a 2 GB board. Commit stamp (`/usr/local/src/.dfs-built`)
+— rebuild only when the checked-out commit changed; a full Go build on a Pinebook
+is minutes.
+
+`dfs.service` stays **disabled** until `DFS_PUBLIC` is set in `/etc/dfs/env`
+(grepped, not sourced — same reason as restic). That value is the address users
+reach *and* the CN of the self-signed cert; empty means a service at no address.
+The firewall doesn't open its port, so dfs is tailnet-only by default — a public
+file host should be a decision, not an accident. Data dir is `0700` and owned by
+system user `dfs`: it holds `master.key` plus every user's ciphertext.
+
+**`remove-xfce.sh` is the only destructive script here** — `apt purge` takes config
+with it, and there is no undo. Hence: not in `bootstrap.sh`, prompts before acting
+(`XFCE_YES=1` overrides), refuses when `$DISPLAY` is set (it would purge the
+desktop out from under the terminal running it) and when stdin isn't a TTY. It
+matches packages by *glob patterns*, not a fixed list, because names differ across
+Debian/Ubuntu/Armbian images; libraries are left to `autoremove --purge`. Flips
+`graphical.target` → `multi-user.target`, else boot stalls on a display manager
+that no longer exists.
 
 ## Verifying changes
 

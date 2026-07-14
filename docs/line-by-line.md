@@ -141,20 +141,39 @@ parse_common_args() {
 
 Walk each argument. `--dry-run` flips on rehearsal mode. `-h`/`--help` prints usage text (each script defines own `usage`) and quits happily (`exit 0`). Anything else (`*` = "any other value") = typo, so `die` with helpful message. `local a` keeps loop variable from leaking out and clobbering something else.
 
-### Becoming root (lines 52–59)
+### Becoming root
 
 ```bash
+SUDO_KEEP=(
+	DRY_RUN SKIP TARGET_USER
+	FORCE_SSH_KEYONLY
+	TS_AUTHKEY TS_DISTRO TS_CODENAME
+	SHELL_RICH SHELL_NO_CHSH
+	APPS DFS_REPO DFS_REF
+	XFCE_YES XFCE_PURGE_X
+)
+
 require_root() {
 	if [ "$(id -u)" -eq 0 ]; then
 		return 0
 	fi
 	command -v sudo >/dev/null 2>&1 || die "root required and sudo not found"
+	local pass=() v
+	for v in "${SUDO_KEEP[@]}"; do
+		if [ -n "${!v+x}" ]; then
+			pass+=("$v=${!v}")
+		fi
+	done
 	log "re-executing under sudo…"
-	exec sudo DRY_RUN="$DRY_RUN" "$SELF" "$@"
+	exec sudo "${pass[@]}" "$SELF" "$@"
 }
 ```
 
-`id -u` prints user-number; 0 = root. So "already root, done." Otherwise: `command -v sudo` checks sudo exists (`>/dev/null 2>&1` throws away output — only care whether it *succeeds*), if not, `die`. Then `exec sudo ... "$SELF" "$@"` **replaces** current script with new one running as root — same script (`$SELF`), same arguments (`$@`), `DRY_RUN` passed explicitly so rehearsal mode survives jump. `exec` = "become that new process," so nothing after this line runs in old one.
+`id -u` prints user-number; 0 = root. So "already root, done." Otherwise: `command -v sudo` checks sudo exists (`>/dev/null 2>&1` throws away output — only care whether it *succeeds*), if not, `die`. Then `exec sudo ... "$SELF" "$@"` **replaces** current script with new one running as root — same script (`$SELF`), same arguments (`$@`). `exec` = "become that new process," so nothing after this line runs in old one.
+
+**Why `SUDO_KEEP`?** sudo throws your environment variables away on purpose — that's a security feature, and `sudo -E` (keep everything) is usually forbidden by sudoers. So every knob has to be handed over *by name* on the sudo command line, as `NAME=value` pairs before the script path. Loop builds that list: `${!v+x}` = "is variable named by `v` set at all?" (indirect lookup — `v` holds a *name*, `${!v}` fetches that name's value; the `+x` form is true even when the value is empty). Only set ones get passed.
+
+This bit us for real: `SHELL_RICH=1 ./setup/shell.sh` used to sudo-jump and land with `SHELL_RICH` gone, so it quietly took the plain path and you wondered why starship never showed up. Add a new env knob to any script → add it here too, or it dies at the sudo boundary.
 
 **Why long `if` instead of `[ "$(id -u)" -eq 0 ] && return 0`?** *The* bug from earlier. Under `set -e`, write `test && return 0` and test is *false* = whole `&&` line counts as failed command — `-e` kills script on spot. So short version quietly *exited* instead of continuing to sudo line, meaning script never became root. Verbose `if ...; then return; fi` form avoids trap. Pattern used everywhere in repo for exactly this reason.
 
@@ -1000,6 +1019,147 @@ EOF
 ```
 
 Announce completion. Rehearsal: stop here. Real run: print manual follow-ups scripts *deliberately* don't do for you: log in to Tailscale, copy restic key somewhere safe, set backup destination, finish SSH lockdown once key in place. These steps need human decision or browser — automation takes you right up to them, no further.
+
+---
+
+## `setup/apps.sh` — the optional apps (not in bootstrap)
+
+Installs self-hosted apps you asked for. Today one: **dfs** (steves-domainless-filehosting) — file host with accounts, web UI, share links, everything encrypted on disk. Written in Go, stdlib only, ends up as one static binary.
+
+Loop at bottom decides what runs:
+
+```bash
+APPS="${APPS:-dfs}"
+...
+	for app in $APPS; do
+		case "$app" in
+			dfs) log "──── dfs ────"; install_dfs ;;
+			*)   die "unknown app: $app" ;;
+		esac
+	done
+```
+
+`APPS` = space-separated wish list, `dfs` when you say nothing. Unknown name = `die`, not silent skip. Adding a second app later = one more `case` arm.
+
+### `dfs_sync_source`
+
+```bash
+	if [ -d "$DFS_SRC/.git" ]; then
+		run git -C "$DFS_SRC" fetch --depth 1 origin "$DFS_REF"
+		run git -C "$DFS_SRC" checkout -q FETCH_HEAD
+	else
+		run git clone --depth 1 --branch "$DFS_REF" "$DFS_REPO" "$DFS_SRC"
+	fi
+	git -C "$DFS_SRC" rev-parse HEAD 2>/dev/null || true
+```
+
+First run: clone. Later runs: fetch newest commit, jump to it. `--depth 1` = "only the newest commit, not ten years of history" — smaller download, less SD card burned. `git -C DIR` = "pretend you're in DIR" (no `cd`, so nothing leaks to the rest of the script). Last line prints the commit hash it landed on; that hash is the function's *return value*. `|| true` because on a dry run nothing was cloned and asking for the hash of an empty folder is an error we don't care about.
+
+### `dfs_build`
+
+```bash
+	if [ -x "$DFS_BIN" ] && [ -f "$DFS_STAMP" ] && [ "$(cat "$DFS_STAMP")" = "$commit" ] && [ -n "$commit" ]; then
+		ok "dfs already built at $commit"
+		return 0
+	fi
+	run env GOTOOLCHAIN=auto GOCACHE=/var/cache/go-build GOPATH=/var/lib/go HOME=/root \
+		go -C "$DFS_SRC" build -p 2 -trimpath -ldflags '-s -w' -o "$DFS_BIN" .
+	...
+	printf '%s\n' "$commit" >"$DFS_STAMP"
+```
+
+Idempotence trick: after each build, write the commit hash into a stamp file. Next run, if binary exists *and* stamp matches the commit we just checked out, skip the build. Nothing changed = nothing to compile, and compiling Go on a Pinebook is minutes, not seconds.
+
+Three build knobs earn their place:
+
+- **`GOTOOLCHAIN=auto`** — dfs's `go.mod` asks for a newer Go than Debian ships. `auto` lets Go download exactly the toolchain it needs. Without it: hard error, "requires go >= 1.26".
+- **`-p 2`** — compile at most 2 files at once. Default = one job per CPU core, and four parallel Go compilers on a 2 GB board runs it out of memory.
+- **`-trimpath -ldflags '-s -w'`** — strip build paths and debug symbols. Smaller binary, and no `/usr/local/src/...` strings baked in.
+
+`GOCACHE` / `GOPATH` / `HOME` pinned because we're root under sudo, and Go otherwise scatters caches wherever `HOME` happens to point.
+
+### `dfs_account`, `dfs_config`, `dfs_unit`
+
+```bash
+	run useradd --system --home-dir "$DFS_DATA" --shell /usr/sbin/nologin dfs
+	run install -d -m 0700 -o dfs -g dfs "$DFS_DATA"
+```
+
+Its own system user, no login shell — a file host that gets broken into shouldn't hand over a shell. Data dir `0700` (owner only): it holds `master.key` plus every user's encrypted file. Nobody else on the box gets to read it.
+
+`dfs_config` reuses backup.sh's **`create_if_absent`** — writes `/etc/dfs/env` once, never touches it again, because that file holds *your* decisions. `dfs_configured` then *greps* it rather than sourcing it (same reasoning as restic: sourcing runs whatever ended up in the file).
+
+The unit is where the sandboxing lives:
+
+```
+ProtectSystem=strict     # whole filesystem read-only …
+StateDirectory=dfs       # … except /var/lib/dfs
+ProtectHome=yes          # /home invisible
+RestrictAddressFamilies=AF_INET AF_INET6   # TCP/IP only, no unix/netlink tricks
+MemoryMax=512M           # can't eat the whole board
+```
+
+`ExecStart=... --public ${DFS_PUBLIC}` reads that variable out of the env file at start time.
+
+**Why the service stays disabled until `DFS_PUBLIC` is set:** it's the host:port users type, *and* the name baked into the self-signed TLS certificate. Empty = a cert for nobody, a service reachable at no address. Same philosophy as restic's empty repository: a thing that looks green while doing nothing is worse than a thing that's honestly off.
+
+Last check warns if no firewall is loaded — because with harden.sh's ruleset, dfs's port isn't opened, so it's reachable over `tailscale0` only. That's deliberate: a file host on the open internet should be a decision, not an accident.
+
+## `setup/remove-xfce.sh` — the uninstaller
+
+Rips a desktop off a box meant to be headless. Deliberately **not** in bootstrap: purging is not reversible, so it never happens automatically.
+
+### Finding what to purge
+
+```bash
+PATTERNS=('xfce4*' 'xfdesktop4*' 'xfwm4*' … 'lightdm*' 'xscreensaver*')
+
+matching_packages() {
+	while read -r pkg status; do
+		[ "$status" = installed ] || continue
+		for pat in "$@"; do
+			case "$pkg" in
+				$pat) printf '%s\n' "$pkg"; break ;;
+			esac
+		done
+	done < <(dpkg-query -W -f='${Package} ${db:Status-Status}\n' 2>/dev/null)
+}
+```
+
+Ask dpkg for every package plus its state, keep the `installed` ones, print the names matching a pattern. `case "$pkg" in $pat)` — `$pat` **unquoted on purpose**, so `xfce4*` behaves as a wildcard instead of a literal name. `break` stops after the first pattern matches, so a package is never listed twice.
+
+Why patterns and not one big fixed list? Names differ between Debian, Ubuntu and Armbian images. Match by shape, and this works on all of them. Only *top-level* desktop packages are listed: the pile of `libxfce4…` libraries underneath is left to `apt-get autoremove --purge`, which sweeps them once nothing needs them.
+
+### The two guards
+
+```bash
+	if [ "$DRY_RUN" != 1 ] && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ "${XFCE_YES:-0}" != 1 ]; then
+		die "a graphical session is active — run this from a TTY or over SSH (or set XFCE_YES=1)"
+	fi
+```
+
+`DISPLAY` set = you're inside a graphical session — quite possibly an XFCE terminal, i.e. the thing about to be purged out from under you. Refuse. A *dry run* changes nothing, so previewing from the desktop is fine.
+
+```bash
+	printf 'Purge the %s packages above? [y/N] ' "$1" >&2
+	read -r reply
+	case "$reply" in
+		y|Y|yes|YES) return 0 ;;
+		*) die "aborted" ;;
+	esac
+```
+
+The one place in this repo that *asks*. Everything else here is safe to re-run; this deletes things. Anything that isn't a clear yes = abort. `[ ! -t 0 ]` (no keyboard attached, e.g. run from cron) also aborts unless you set `XFCE_YES=1` — no unattended desktop deletion.
+
+### Afterwards
+
+```bash
+	if [ "$(systemctl get-default)" = graphical.target ]; then
+		run systemctl set-default multi-user.target
+	fi
+```
+
+The boot target was "start the graphical login." The graphical login is gone. Leave it and boot hangs waiting for a desktop that no longer exists — so switch it to `multi-user.target` (console). Final `warn` reminds you the leftovers in *your home folder* (`~/.config/xfce4`) are yours to delete: the script won't reach into a user's files.
 
 ---
 

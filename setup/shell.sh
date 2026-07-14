@@ -23,7 +23,9 @@ user's login shell to zsh. Set SHELL_NO_CHSH=1 to skip the shell change.
 SHELL_RICH=1 adds a starship prompt and atuin shell history. Unlike everything
 else here these are NOT apt packages: each is downloaded from the internet and
 run, so the rich path needs connectivity. The default (lean) path never fetches
-anything and works offline.
+anything and works offline. In rich mode starship is also configured after the
+install (~/.config/starship.toml) and initialised last, so it is the prompt you
+actually get.
 
 The owner is taken from $SUDO_USER, or $TARGET_USER when running as root
 directly.
@@ -60,6 +62,47 @@ install_rich() {
 		log "installing atuin for $u (network fetch)"
 		run runuser -u "$u" -- sh -c "curl -fsSL $ATUIN_URL | sh -s -- --no-modify-path"
 	fi
+
+	if [ "$DRY_RUN" != 1 ] && ! command -v starship >/dev/null 2>&1; then
+		die "starship install did not produce a binary on PATH"
+	fi
+}
+
+# Post-install starship setup. Installing the binary is not enough — without a
+# config it falls back to the upstream default preset, which probes for a dozen
+# language toolchains on every prompt (slow on an SBC). This writes an explicit,
+# user-owned config whose `format` lists only cheap modules, so nothing else is
+# ever evaluated. The matching `starship init zsh` line in ~/.zshrc runs after
+# the native vcs_info prompt, which makes starship the prompt in effect.
+configure_starship() {
+	local u="$1" home="$2" grp="$3"
+	run install -d -m 0755 -o "$u" -g "$grp" "$home/.config"
+	install_file "$home/.config/starship.toml" 0644 "$u:$grp" <<'EOF'
+# ~/.config/starship.toml — managed by steves-sbc-setup (setup/shell.sh)
+# Explicit format = only these modules run. Keeps the prompt instant on an SBC.
+add_newline = false
+command_timeout = 1000
+format = "$username$hostname$directory$git_branch$git_status$cmd_duration$character"
+
+[username]
+show_always = true
+format = "[$user]($style)@"
+
+[hostname]
+ssh_only = false
+format = "[$hostname]($style):"
+
+[directory]
+truncation_length = 3
+truncate_to_repo = true
+
+[cmd_duration]
+min_time = 2000
+
+[character]
+success_symbol = "[❯](bold green)"
+error_symbol = "[❯](bold red)"
+EOF
 }
 
 main() {
@@ -84,6 +127,7 @@ main() {
 	apt_install zsh zsh-syntax-highlighting zsh-autosuggestions tmux
 	if [ "$rich" = 1 ]; then
 		install_rich "$u"
+		configure_starship "$u" "$home" "$grp"
 	fi
 
 	# --- ~/.zshrc -----------------------------------------------------------
@@ -120,24 +164,26 @@ PROMPT='%F{green}%n@%m%f:%F{blue}%~%f%F{yellow}${vcs_info_msg_0_}%f%# '
 alias ll='ls -alh --color=auto'
 alias la='ls -A --color=auto'
 alias grep='grep --color=auto'
+EOF
+		if [ "$rich" = 1 ]; then
+			cat <<'EOF'
+
+# --- rich extras (SHELL_RICH): starship prompt + atuin history ---
+# starship inits after the vcs_info prompt above and takes it over — that is how
+# it becomes the default prompt; the native one stays as the fallback. Both are
+# guarded with `command -v`, so a missing binary never breaks the shell.
+export PATH="$HOME/.atuin/bin:$HOME/.local/bin:$PATH"
+command -v starship >/dev/null && eval "$(starship init zsh)"
+command -v atuin >/dev/null && eval "$(atuin init zsh)"
+EOF
+		fi
+		cat <<'EOF'
 
 # --- plugins (Debian packages). syntax-highlighting must be sourced last: it
 #     hooks the line editor and expects to wrap everything before it. ---
 source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh 2>/dev/null
 source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh 2>/dev/null
 EOF
-		if [ "$rich" = 1 ]; then
-			cat <<'EOF'
-
-# --- rich extras (SHELL_RICH): starship prompt + atuin history ---
-# starship replaces the vcs_info prompt above. Both are guarded with `command
-# -v`, so if a binary is missing the shell still starts (and falls back to the
-# native prompt).
-export PATH="$HOME/.atuin/bin:$HOME/.local/bin:$PATH"
-command -v starship >/dev/null && eval "$(starship init zsh)"
-command -v atuin >/dev/null && eval "$(atuin init zsh)"
-EOF
-		fi
 	} | install_file "$home/.zshrc" 0644 "$u:$grp"
 
 	# --- ~/.tmux.conf -------------------------------------------------------

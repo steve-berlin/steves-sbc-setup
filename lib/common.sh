@@ -45,7 +45,20 @@ parse_common_args() {
 	done
 }
 
-# Re-exec under sudo if not already root, preserving DRY_RUN and args.
+# Every environment knob any script reads. sudo scrubs the environment, and
+# `sudo -E` is commonly forbidden by sudoers, so each one has to be forwarded by
+# name on the sudo command line — otherwise `SHELL_RICH=1 ./setup/shell.sh`
+# silently takes the default path.
+SUDO_KEEP=(
+	DRY_RUN SKIP TARGET_USER
+	FORCE_SSH_KEYONLY
+	TS_AUTHKEY TS_DISTRO TS_CODENAME
+	SHELL_RICH SHELL_NO_CHSH
+	APPS DFS_REPO DFS_REF
+	XFCE_YES XFCE_PURGE_X
+)
+
+# Re-exec under sudo if not already root, preserving SUDO_KEEP vars and args.
 # NOTE: guard clauses are written `if ...; then return; fi` rather than
 # `[ ... ] && return`, because under `set -e` a trailing false && list makes
 # the whole script exit.
@@ -54,8 +67,14 @@ require_root() {
 		return 0
 	fi
 	command -v sudo >/dev/null 2>&1 || die "root required and sudo not found"
+	local pass=() v
+	for v in "${SUDO_KEEP[@]}"; do
+		if [ -n "${!v+x}" ]; then
+			pass+=("$v=${!v}")
+		fi
+	done
 	log "re-executing under sudo…"
-	exec sudo DRY_RUN="$DRY_RUN" "$SELF" "$@"
+	exec sudo "${pass[@]}" "$SELF" "$@"
 }
 
 # --- platform guards --------------------------------------------------------

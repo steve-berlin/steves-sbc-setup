@@ -76,9 +76,13 @@ Three things to understand before flipping it on:
 
 **Extra `~/.zshrc` lines guarded.** They read `command -v starship >/dev/null && eval "$(starship init zsh)"` — meaning "only turn starship on if actually installed." So if install ever fail or you remove binary, shell still start fine, quietly fall back to native prompt. Nothing break.
 
-**starship win prompt.** Lean config already set git-aware prompt; starship load after and take over completely. Intended — you ask for starship, you get starship. Native prompt just fallback.
+**starship win prompt.** Lean config already set git-aware prompt; starship init *after* it and take over completely. That how it become default prompt — last one to speak wins. Intended: you ask for starship, you get starship. Native prompt just fallback. Init lines sit *before* the plugin sources, so syntax-highlighting still last thing in file (its rule).
+
+**starship also gets configured, not just installed.** Binary alone fall back to upstream default preset, which probe for dozen language toolchains on every prompt — slow on SBC. So script write `~/.config/starship.toml` (owned by you, not root) with explicit `format` line: only username, host, directory, git branch/status, command duration, prompt symbol. Modules not listed never run. Fast prompt, still useful.
 
 Everything else (zsh plugins, tmux, aliases, shell switch) identical to lean mode. Rich mode only *add*.
+
+**One gotcha worth knowing:** `SHELL_RICH=1 ./setup/shell.sh` works because `require_root` hands the variable to sudo by name. sudo throws environment away otherwise (security feature), and rich mode would silently not happen. Every env knob in repo listed in `SUDO_KEEP` in `lib/common.sh` for exactly that reason.
 
 ## How it was checked
 

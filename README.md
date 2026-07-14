@@ -45,6 +45,14 @@ SKIP="tailscale monitor" ./setup/bootstrap.sh
 | `setup/backup.sh` | Encrypted, deduplicated `restic` backups on a daily systemd timer |
 | `setup/bootstrap.sh` | Runs all of the above, in dependency order |
 
+Two more scripts are **not** part of `bootstrap.sh` — run them yourself when you
+want them:
+
+| Script | Does |
+|---|---|
+| `setup/apps.sh` | Optional self-hosted apps (`APPS`, default `dfs`): builds [steves-domainless-filehosting](https://github.com/steve-berlin/steves-domainless-filehosting) from source and runs it as a sandboxed systemd service |
+| `setup/remove-xfce.sh` | Purges an XFCE desktop off a box that should be headless, and switches the boot target to console. Destructive; asks first |
+
 `lib/common.sh` holds the shared helpers: logging, `--dry-run` plumbing, sudo
 re-exec, idempotent file installs, and apt wrappers.
 
@@ -60,6 +68,8 @@ one per stage:
 - [`docs/shell.md`](docs/shell.md) — zsh + tmux
 - [`docs/monitor.md`](docs/monitor.md) — node_exporter metrics
 - [`docs/backup.md`](docs/backup.md) — restic backups
+- [`docs/apps.md`](docs/apps.md) — the optional app host (dfs)
+- [`docs/remove-xfce.md`](docs/remove-xfce.md) — stripping the desktop
 - [`docs/line-by-line.md`](docs/line-by-line.md) — every function and operation, line by line
 
 ## Conventions
@@ -94,7 +104,19 @@ writes `~/.zshrc` + `~/.tmux.conf` owned by that user. It takes effect on next
 login; the old dotfiles are backed up. Set `SHELL_NO_CHSH=1` to keep your
 current shell and only drop the config files. `SHELL_RICH=1` additionally
 installs starship + atuin — the one path here that fetches from the internet
-(they aren't in apt); the default stays offline-clean.
+(they aren't in apt) — and writes a `~/.config/starship.toml` so starship is
+configured, not just present. The default stays offline-clean.
+
+**Apps.** `apps.sh` leaves `dfs.service` **disabled** until you set `DFS_PUBLIC`
+in `/etc/dfs/env`: that value is both the address users reach and the name in the
+self-signed TLS certificate, so an empty one serves nobody. The firewall does not
+open its port, which keeps the file host on the tailnet until you decide
+otherwise.
+
+**Removing the desktop.** `remove-xfce.sh` *purges* — packages and their config,
+with no undo. It prints the list and asks before acting (`XFCE_YES=1` skips the
+prompt), refuses to run from inside a graphical session, and is deliberately not
+part of `bootstrap.sh`. Preview with `--dry-run` first.
 
 ## Requirements
 
