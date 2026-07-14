@@ -11,14 +11,18 @@ usage() {
 	cat <<'EOF'
 usage: apps.sh [--dry-run] [--help]
 
-Installs the self-hosted apps listed in APPS (default: dfs).
+Installs the self-hosted apps listed in APPS (default: dfs navidrome).
 
-    dfs   steves-domainless-filehosting — encrypted-at-rest file host with
-          accounts, a web UI and public share links. Single static Go binary,
-          stdlib only. Built from source into /usr/local/bin/dfs, run by a
-          system user 'dfs' under systemd, data in /var/lib/dfs.
+    dfs        steves-domainless-filehosting — encrypted-at-rest file host with
+               accounts, a web UI and public share links. Single static Go
+               binary, stdlib only. Built from source into /usr/local/bin/dfs,
+               run by a system user 'dfs' under systemd, data in /var/lib/dfs.
 
-Config lives in /etc/dfs/env (never overwritten):
+    navidrome  music server with a web player, Subsonic API (so any Subsonic
+               app on a phone works). Installed from the upstream .deb —
+               checksum-verified — because it needs no compiling.
+
+dfs config lives in /etc/dfs/env (never overwritten):
   DFS_ADDR     listen address                 (default :8443)
   DFS_PUBLIC   host:port advertised to users, and baked into the self-signed
                TLS cert. REQUIRED — the service stays DISABLED until it is set,
@@ -28,17 +32,24 @@ Config lives in /etc/dfs/env (never overwritten):
 After enabling, create accounts as root:
     sudo -u dfs DFS_PASSWORD='…' dfs useradd alice --data /var/lib/dfs
 
-harden.sh's firewall does not open DFS_ADDR, so the host is reachable over
-tailscale0 only. That is the intended default; open the port deliberately if
-you want it on the LAN or the public internet.
+navidrome knobs (env, at install time):
+  NAVIDROME_VERSION   release tag to pin, e.g. v0.63.2 (default: latest)
+  NAVIDROME_MUSIC     music library path     (default /srv/music)
+  NAVIDROME_PORT      listen port            (default 4533)
+Its first visitor creates the admin account, so reach it before anyone else can.
 
-Building needs the network (apt + git clone + Go module/toolchain fetch).
+harden.sh's firewall opens neither port, so both are reachable over tailscale0
+only. That is the intended default; open a port deliberately if you want it on
+the LAN or the public internet.
 
-Idempotent. Safe to re-run: it rebuilds only when the source commit changed.
+Installing needs the network (apt, git clone + Go toolchain, GitHub release).
+
+Idempotent. Safe to re-run: dfs rebuilds only when the source commit changed,
+navidrome reinstalls only when the target version differs.
 EOF
 }
 
-APPS="${APPS:-dfs}"
+APPS="${APPS:-dfs navidrome}"
 
 DFS_REPO="${DFS_REPO:-https://github.com/steve-berlin/steves-domainless-filehosting.git}"
 DFS_REF="${DFS_REF:-main}"
@@ -48,6 +59,12 @@ DFS_DATA=/var/lib/dfs
 DFS_ETC=/etc/dfs
 DFS_ENV="$DFS_ETC/env"
 DFS_STAMP=/usr/local/src/.dfs-built
+
+ND_REPO=navidrome/navidrome
+ND_VERSION="${NAVIDROME_VERSION:-latest}"
+ND_MUSIC="${NAVIDROME_MUSIC:-/srv/music}"
+ND_PORT="${NAVIDROME_PORT:-4533}"
+ND_CONF=/etc/navidrome/navidrome.toml
 
 # Config holds operator intent, so — like backup.sh — this never clobbers.
 create_if_absent() {
@@ -185,11 +202,126 @@ install_dfs() {
 		warn "set it, then re-run: sudo setup/apps.sh"
 	fi
 
+	firewall_note dfs
+}
+
+# harden.sh's ruleset opens no app ports, so an app is tailnet-only by default.
+# Without that ruleset it is on every interface instead — worth saying out loud.
+firewall_note() {
 	if ! nft list ruleset >/dev/null 2>&1 || [ -z "$(nft list ruleset 2>/dev/null)" ]; then
-		warn "no nftables ruleset loaded — dfs would be exposed on every interface; run setup/harden.sh"
+		warn "no nftables ruleset loaded — $1 would be exposed on every interface; run setup/harden.sh"
 	else
-		ok "firewall present — dfs reachable over tailscale0 only until you open its port"
+		ok "firewall present — $1 reachable over tailscale0 only until you open its port"
 	fi
+}
+
+# --- navidrome --------------------------------------------------------------
+# Upstream ships a .deb, so there is nothing to compile: Navidrome bundles a
+# prebuilt web UI, and building that would drag in Node on a 2 GB board.
+
+# Debian arch -> the arch string in the release asset names.
+nd_asset_arch() {
+	case "$(arch)" in
+		amd64) printf 'amd64' ;;
+		arm64) printf 'arm64' ;;
+		armhf) printf 'armv7' ;;
+		i386)  printf '386' ;;
+		*)     die "no navidrome release for architecture $(arch)" ;;
+	esac
+}
+
+# Resolve "latest" to a real tag once, so the version we check, download and
+# record is the same one even if upstream publishes mid-run.
+nd_resolve_version() {
+	if [ "$ND_VERSION" != latest ]; then
+		printf '%s' "$ND_VERSION"
+		return 0
+	fi
+	curl -fsSL "https://api.github.com/repos/$ND_REPO/releases/latest" |
+		sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' |
+		head -n1
+}
+
+# Download the .deb and verify it against the release's checksums.txt. An
+# unverified binary running as a service is not something to shrug at.
+nd_fetch_deb() {
+	local tag="$1" ver="$2" dir="$3" deb="$4"
+	local base="https://github.com/$ND_REPO/releases/download/$tag"
+	run curl -fsSL --retry 3 -o "$dir/$deb" "$base/$deb"
+	run curl -fsSL --retry 3 -o "$dir/navidrome_checksums.txt" "$base/navidrome_checksums.txt"
+	if [ "$DRY_RUN" = 1 ]; then
+		warn "[dry] would verify sha256 of $deb"
+		return 0
+	fi
+	( cd "$dir" && grep -F " $deb" navidrome_checksums.txt | sha256sum -c - ) ||
+		die "checksum mismatch for $deb — refusing to install"
+	ok "checksum verified: $deb ($ver)"
+}
+
+nd_installed_version() {
+	dpkg-query -W -f='${Version}' navidrome 2>/dev/null || true
+}
+
+nd_config() {
+	# Navidrome's own .deb ships this path as a conffile; install_file backs up
+	# whatever is there before writing, so an upstream sample is never lost.
+	install_file "$ND_CONF" 0640 <<EOF
+# Managed by steves-sbc-setup (setup/apps.sh)
+MusicFolder = "$ND_MUSIC"
+DataFolder = "/var/lib/navidrome"
+Port = $ND_PORT
+Address = "0.0.0.0"
+LogLevel = "info"
+
+# A full rescan is expensive on SD storage; watch the folder instead and sweep
+# once a day.
+ScanSchedule = "@every 24h"
+
+# Caches live on eMMC/SD. Keep them small on purpose.
+TranscodingCacheSize = "50MB"
+ImageCacheSize = "100MB"
+EOF
+	run chgrp navidrome "$ND_CONF"
+
+	# The library is yours, not the service's: owned by the box's human, and
+	# navidrome only ever reads it (world-readable, mode 0755).
+	local owner
+	owner="$(target_user)"
+	if [ -n "$owner" ]; then
+		run install -d -m 0755 -o "$owner" -g "$(id -gn "$owner")" "$ND_MUSIC"
+	else
+		run install -d -m 0755 "$ND_MUSIC"
+	fi
+}
+
+install_navidrome() {
+	local tag ver aarch deb tmp
+	apt_install curl ca-certificates
+
+	tag="$(nd_resolve_version)"
+	[ -n "$tag" ] || die "could not resolve the latest navidrome release"
+	ver="${tag#v}"
+	aarch="$(nd_asset_arch)"
+	deb="navidrome_${ver}_linux_${aarch}.deb"
+
+	if [ "$(nd_installed_version)" = "$ver" ]; then
+		ok "navidrome $ver already installed"
+	else
+		log "installing navidrome $ver ($aarch)"
+		tmp="$(mktemp -d)"
+		nd_fetch_deb "$tag" "$ver" "$tmp" "$deb"
+		# apt, not dpkg: it pulls the .deb's dependencies (ffmpeg, etc).
+		run env DEBIAN_FRONTEND=noninteractive apt-get install -y "$tmp/$deb"
+		rm -rf "$tmp"
+	fi
+
+	nd_config
+	run systemctl daemon-reload
+	enable_now navidrome.service
+	firewall_note navidrome
+
+	warn "navidrome: the FIRST visitor to http://<host>:$ND_PORT/ creates the admin account — claim it now"
+	warn "drop music into $ND_MUSIC; it is rescanned daily (or on change)"
 }
 
 main() {
@@ -198,8 +330,9 @@ main() {
 	local app
 	for app in $APPS; do
 		case "$app" in
-			dfs) log "──── dfs ────"; install_dfs ;;
-			*)   die "unknown app: $app" ;;
+			dfs)       log "──── dfs ────"; install_dfs ;;
+			navidrome) log "──── navidrome ────"; install_navidrome ;;
+			*)         die "unknown app: $app" ;;
 		esac
 	done
 

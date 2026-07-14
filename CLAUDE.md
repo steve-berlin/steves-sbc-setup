@@ -20,7 +20,7 @@ setup/shell.sh     zsh + tmux for the box's owner
 setup/monitor.sh   prometheus-node-exporter
 setup/backup.sh    restic + systemd timer
 setup/bootstrap.sh runs all stages in order
-setup/apps.sh      optional self-hosted apps (dfs) — NOT in bootstrap
+setup/apps.sh      optional self-hosted apps (dfs, navidrome) — NOT in bootstrap
 setup/remove-xfce.sh  purge XFCE desktop — NOT in bootstrap, destructive
 docs/              plain-language, per-script explanations (docs/shell.md, …)
 ```
@@ -180,6 +180,22 @@ reach *and* the CN of the self-signed cert; empty means a service at no address.
 The firewall doesn't open its port, so dfs is tailnet-only by default — a public
 file host should be a decision, not an accident. Data dir is `0700` and owned by
 system user `dfs`: it holds `master.key` plus every user's ciphertext.
+
+**Navidrome comes from the upstream `.deb`, not from source.** Building it pulls
+Node in to compile the bundled web UI — absurd on a 2 GB board. The release asset
+is `navidrome_<ver>_linux_<arch>.deb` (`arch`: amd64/arm64/armv7/386, *not* the
+Debian arch string — `nd_asset_arch` maps it) and the checksum file is
+`navidrome_checksums.txt`, **not** `checksums.txt` (that name 404s). `sha256sum -c`
+gates the install; a mismatch dies. `apt-get install ./x.deb`, not `dpkg -i`, so
+its `ffmpeg` dependency resolves. `latest` is resolved to a concrete tag once and
+reused, so a mid-run upstream publish can't split the version across steps.
+
+Navidrome's admin account belongs to the **first HTTP visitor**, so the script
+warns loudly. Config `/etc/navidrome/navidrome.toml` is a dpkg conffile —
+`install_file` backs up whatever upstream shipped before writing. Caches are
+capped small (50/100 MB) because they land on eMMC/SD. `/srv/music` is owned by
+`target_user`, not by the service: the library is the operator's, and navidrome
+only reads it.
 
 **`remove-xfce.sh` is the only destructive script here** — `apt purge` takes config
 with it, and there is no undo. Hence: not in `bootstrap.sh`, prompts before acting

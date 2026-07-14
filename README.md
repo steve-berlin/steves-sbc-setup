@@ -50,7 +50,7 @@ want them:
 
 | Script | Does |
 |---|---|
-| `setup/apps.sh` | Optional self-hosted apps (`APPS`, default `dfs`): builds [steves-domainless-filehosting](https://github.com/steve-berlin/steves-domainless-filehosting) from source and runs it as a sandboxed systemd service |
+| `setup/apps.sh` | Optional self-hosted apps (`APPS`, default `dfs navidrome`): [steves-domainless-filehosting](https://github.com/steve-berlin/steves-domainless-filehosting) built from source as a sandboxed service, and [Navidrome](https://www.navidrome.org/) (music server, Subsonic API) from the checksum-verified upstream `.deb` |
 | `setup/remove-xfce.sh` | Purges an XFCE desktop off a box that should be headless, and switches the boot target to console. Destructive; asks first |
 
 `lib/common.sh` holds the shared helpers: logging, `--dry-run` plumbing, sudo
@@ -109,9 +109,11 @@ configured, not just present. The default stays offline-clean.
 
 **Apps.** `apps.sh` leaves `dfs.service` **disabled** until you set `DFS_PUBLIC`
 in `/etc/dfs/env`: that value is both the address users reach and the name in the
-self-signed TLS certificate, so an empty one serves nobody. The firewall does not
-open its port, which keeps the file host on the tailnet until you decide
-otherwise.
+self-signed TLS certificate, so an empty one serves nobody. Navidrome's admin
+account is claimed by whoever loads `http://<host>:4533/` first, so open it
+yourself once it is up. The firewall opens neither port, which keeps both apps on
+the tailnet until you decide otherwise. Music lives in `/srv/music`
+(`NAVIDROME_MUSIC` to change), owned by you, read-only to the service.
 
 **Removing the desktop.** `remove-xfce.sh` *purges* — packages and their config,
 with no undo. It prints the list and asks before acting (`XFCE_YES=1` skips the

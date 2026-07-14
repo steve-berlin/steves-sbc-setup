@@ -1103,7 +1103,76 @@ MemoryMax=512M           # can't eat the whole board
 
 **Why the service stays disabled until `DFS_PUBLIC` is set:** it's the host:port users type, *and* the name baked into the self-signed TLS certificate. Empty = a cert for nobody, a service reachable at no address. Same philosophy as restic's empty repository: a thing that looks green while doing nothing is worse than a thing that's honestly off.
 
-Last check warns if no firewall is loaded — because with harden.sh's ruleset, dfs's port isn't opened, so it's reachable over `tailscale0` only. That's deliberate: a file host on the open internet should be a decision, not an accident.
+Last check calls `firewall_note`, which warns if no ruleset is loaded — because with harden.sh's ruleset, no app port is opened, so an app is reachable over `tailscale0` only. That's deliberate: a file host on the open internet should be a decision, not an accident.
+
+### `install_navidrome` and friends
+
+Navidrome = music server: web player, plus the Subsonic API every phone music app speaks. Unlike dfs it is **not** built here — upstream ships a `.deb`, and compiling it would drag Node in to build the bundled web UI. On a 2 GB board: no.
+
+```bash
+nd_asset_arch() {
+	case "$(arch)" in
+		amd64) printf 'amd64' ;;
+		arm64) printf 'arm64' ;;
+		armhf) printf 'armv7' ;;
+		i386)  printf '386' ;;
+		*)     die "no navidrome release for architecture $(arch)" ;;
+	esac
+}
+```
+
+Debian calls a 32-bit ARM board `armhf`; the release file calls it `armv7`. Translation table, and `die` on anything with no release — better than downloading a 404 page and trying to install it.
+
+```bash
+nd_resolve_version() {
+	if [ "$ND_VERSION" != latest ]; then
+		printf '%s' "$ND_VERSION"
+		return 0
+	fi
+	curl -fsSL "https://api.github.com/repos/$ND_REPO/releases/latest" |
+		sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' |
+		head -n1
+}
+```
+
+"Latest" is resolved to a real tag **once**, then that tag is used for the version check, the download and the checksum. Ask twice and you could compare against 0.63.2 while downloading 0.63.3 if upstream publishes mid-run. `sed -n 's/…/\1/p'` = "find the `tag_name` line, keep only what's inside the quotes." Pin a version instead with `NAVIDROME_VERSION=v0.63.2`.
+
+```bash
+	run curl -fsSL --retry 3 -o "$dir/$deb" "$base/$deb"
+	run curl -fsSL --retry 3 -o "$dir/navidrome_checksums.txt" "$base/navidrome_checksums.txt"
+	( cd "$dir" && grep -F " $deb" navidrome_checksums.txt | sha256sum -c - ) ||
+		die "checksum mismatch for $deb — refusing to install"
+```
+
+Download the package, download the release's list of fingerprints, check ours against it. `sha256sum` boils a file down to one 64-character fingerprint; change one byte anywhere and the fingerprint changes completely. `grep -F " $deb"` picks the one line for our file (`-F` = "treat this as plain text, not a pattern"), `sha256sum -c -` says OK or fails. Mismatch = `die`, no install. You are about to run this thing as a service — check it came from where you think.
+
+(The checksum file is called `navidrome_checksums.txt`, not `checksums.txt`. Guessing the obvious name gives a 404. Asking the API for the real asset names is how that got found.)
+
+```bash
+	if [ "$(nd_installed_version)" = "$ver" ]; then
+		ok "navidrome $ver already installed"
+	else
+		…
+		run env DEBIAN_FRONTEND=noninteractive apt-get install -y "$tmp/$deb"
+	fi
+```
+
+Idempotence again: dpkg already knows what version is installed, so ask it and skip the whole download when it matches. `apt-get install ./file.deb`, **not** `dpkg -i`: apt pulls the package's dependency (`ffmpeg`, for transcoding) along with it; `dpkg` would install a half-broken package and complain.
+
+`nd_config` writes `/etc/navidrome/navidrome.toml` and creates the music folder:
+
+```toml
+MusicFolder = "/srv/music"
+ScanSchedule = "@every 24h"
+TranscodingCacheSize = "50MB"
+ImageCacheSize = "100MB"
+```
+
+Caches are tiny on purpose: they land on the SD card, and SD cards wear out from being written to. One scan a day for the same reason (Navidrome also notices files as they appear).
+
+The music folder is created owned by **you**, not by the service — `install -d -m 0755 -o "$owner"`. The library is the operator's; navidrome only ever reads it.
+
+Then `enable_now navidrome.service` (the `.deb` brought the unit with it), `firewall_note navidrome`, and a loud warning: **whoever loads the web page first becomes the admin.** Navidrome has no password until someone sets one. Claim it immediately.
 
 ## `setup/remove-xfce.sh` — the uninstaller
 
