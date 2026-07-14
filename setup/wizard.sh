@@ -18,8 +18,9 @@ what to install and what to remove, collects the settings each part needs,
 shows you the whole plan, and only then touches anything.
 
     1. provision   base, harden, tailscale, podman, shell, monitor, backup
-    2. apps        dfs (file host), navidrome (music server)
-    3. removal     purge an XFCE desktop off a headless box
+    2. media       USB auto-mount, and pinning one drive to a fixed path
+    3. apps        dfs (file host), navidrome (music server)
+    4. removal     purge an XFCE desktop off a headless box
 
 Nothing happens until you confirm the summary. Answer with Enter to take the
 default shown in [brackets].
@@ -27,6 +28,10 @@ default shown in [brackets].
 Settings you supply here (Tailscale auth key, restic repository, dfs public
 address) are written to the config files the stages read — but only when those
 files do not exist yet: an existing config is yours, and is never overwritten.
+
+Media runs before apps, so a pinned music drive is mounted before Navidrome
+scans it — and the drive you pinned becomes the default answer for Navidrome's
+library path.
 
 Wants a terminal. For unattended runs use bootstrap.sh + environment variables:
 
@@ -106,6 +111,7 @@ preseed() {
 WANT=()          # stage names to run
 APPS_WANTED=()   # app names for apps.sh
 REMOVE_XFCE=0
+PURGE_X=0
 WANT_MEDIA=0
 TS_KEY=''
 RESTIC_REPO=''
@@ -158,7 +164,18 @@ interview() {
 		WANT_MEDIA=1
 		lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,UUID >&2 || true
 		printf '  Leave the UUID empty for hotplug only (mounts under /media).\n' >&2
-		MEDIA_ID="$(ask_val 'UUID of a drive to pin')"
+		# Typos here become an fstab line for a drive that does not exist, so the
+		# answer is checked against what is actually attached before it is kept.
+		while :; do
+			MEDIA_ID="$(ask_val 'UUID of a drive to pin')"
+			if [ -z "$MEDIA_ID" ]; then
+				break
+			fi
+			if [ -e "/dev/disk/by-uuid/$MEDIA_ID" ]; then
+				break
+			fi
+			warn "no attached filesystem has UUID $MEDIA_ID — copy one from the table, or leave it empty"
+		done
 		if [ -n "$MEDIA_ID" ]; then
 			MEDIA_AT="$(ask_val 'mount it at' /srv/music)"
 			if ask_yn 'mount it read-only (right for a library a service only reads)?' y; then
@@ -177,7 +194,12 @@ interview() {
 	fi
 	if ask_yn 'install navidrome (music server, Subsonic API)?' n; then
 		APPS_WANTED+=(navidrome)
-		ND_MUSIC="$(ask_val 'music library path' /srv/music)"
+		# If a drive was just pinned, that is almost certainly where the music
+		# is — offer it as the default rather than making you retype it.
+		ND_MUSIC="$(ask_val 'music library path' "${MEDIA_AT:-/srv/music}")"
+		if [ -n "$MEDIA_AT" ] && [ "$ND_MUSIC" != "$MEDIA_AT" ]; then
+			warn "note: the pinned drive is at $MEDIA_AT, but navidrome will read $ND_MUSIC"
+		fi
 	fi
 
 	section "removal"
@@ -186,6 +208,11 @@ interview() {
 	printf '  The remover asks again, and refuses to run inside a graphical session.\n' >&2
 	if ask_yn 'purge the XFCE desktop?' n; then
 		REMOVE_XFCE=1
+		printf '  Going further and purging the X server too only makes sense if\n' >&2
+		printf '  nothing else needs X — no VNC/RDP server, no headless Xvfb app.\n' >&2
+		if ask_yn 'also purge the X server (xserver-xorg, xinit)?' n; then
+			PURGE_X=1
+		fi
 	fi
 }
 
@@ -209,7 +236,7 @@ summary() {
 	fi
 	printf '  apps:      %s\n' "${APPS_WANTED[*]:-(none)}" >&2
 	printf '  media:     %s\n' "$([ "$WANT_MEDIA" = 1 ] && printf 'hotplug%s' "${MEDIA_ID:+ + pin $MEDIA_ID at $MEDIA_AT}" || printf '(none)')" >&2
-	printf '  remove:    %s\n' "$([ "$REMOVE_XFCE" = 1 ] && printf 'xfce' || printf '(nothing)')" >&2
+	printf '  remove:    %s\n' "$([ "$REMOVE_XFCE" = 1 ] && printf 'xfce%s' "$([ "$PURGE_X" = 1 ] && printf ' + X server')" || printf '(nothing)')" >&2
 	printf '  shell:     %s\n' "$([ "$RICH" = 1 ] && printf 'rich (starship + atuin)' || printf 'lean')" >&2
 	printf '  tailscale: %s\n' "$([ -n "$TS_KEY" ] && printf 'join with auth key' || printf 'install only, join later')" >&2
 	printf '  restic:    %s\n' "${RESTIC_REPO:-(unset — timer stays off)}" >&2
@@ -279,7 +306,7 @@ EOF
 	# inside a graphical session. One "yes" here should not disarm both guards.
 	if [ "$REMOVE_XFCE" = 1 ]; then
 		log "──── remove-xfce ────"
-		"$SELF_DIR/remove-xfce.sh" ${args[@]+"${args[@]}"}
+		XFCE_PURGE_X="$PURGE_X" "$SELF_DIR/remove-xfce.sh" ${args[@]+"${args[@]}"}
 	fi
 }
 

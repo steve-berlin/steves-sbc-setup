@@ -12,7 +12,16 @@ Wizard = one command, asks questions, does rest:
 ./setup/wizard.sh
 ```
 
-Four sections: **provision** (which stages), **config** (keys, paths, repository), **apps** (dfs, navidrome), **removal** (XFCE). Then show plan. Then — only then — touch anything.
+Four sections: **provision** (which stages, plus keys/repository each need), **media** (USB mounting, pinning drive), **apps** (dfs, navidrome), **removal** (XFCE). Then show plan. Then — only then — touch anything.
+
+## Sections know about each other
+
+Point of asking everything up front: answers can *feed* each other.
+
+- Pin drive at `/mnt/tunes`? That become **default** answer for Navidrome's music path. Say yes twice, done. Pick different path anyway = wizard warn you they don't match, then obey you.
+- Media stage run **before** apps, so library already mounted when Navidrome first scan. Other way round = Navidrome index empty folder and you wonder where music went.
+- Typed UUID checked against `/dev/disk/by-uuid/` right there. Typo = warned, asked again. Typo that slip through would become `/etc/fstab` line for drive that don't exist.
+- Say yes to purging XFCE = second question, whether to take X server too (VNC/RDP/Xvfb still need it).
 
 ## Not a replacement for bootstrap
 
