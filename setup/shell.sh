@@ -16,6 +16,8 @@ Installs a lean interactive shell for the box's owner:
     autosuggestions) — no framework, no network fetches
   * tmux with a native, plugin-free config so a dropped SSH connection
     never kills a running job
+  * btop, tuned to a 2s refresh so leaving it open in a tmux pane costs
+    almost nothing on a weak board
 
 Writes ~/.zshrc and ~/.tmux.conf owned by the target user, and switches that
 user's login shell to zsh. Set SHELL_NO_CHSH=1 to skip the shell change.
@@ -66,6 +68,31 @@ install_rich() {
 	if [ "$DRY_RUN" != 1 ] && ! command -v starship >/dev/null 2>&1; then
 		die "starship install did not produce a binary on PATH"
 	fi
+}
+
+# btop rewrites its own config when it exits, so this is written once and then
+# left alone — install_file would otherwise "restore" it on every re-run and
+# leave a trail of .bak files. Defaults are tuned down: btop refreshes 10x/s out
+# of the box, which is real CPU on an A64 when it lives in a tmux pane all day.
+configure_btop() {
+	local u="$1" home="$2" grp="$3"
+	local conf="$home/.config/btop/btop.conf"
+	if [ -e "$conf" ]; then
+		ok "exists, left alone: $conf"
+		return 0
+	fi
+	run install -d -m 0755 -o "$u" -g "$grp" "$home/.config" "$home/.config/btop"
+	install_file "$conf" 0644 "$u:$grp" <<'EOF'
+# ~/.config/btop/btop.conf — seeded by steves-sbc-setup (setup/shell.sh).
+# btop rewrites this file itself on exit; the script never touches it again.
+color_theme = "Default"
+theme_background = False
+update_ms = 2000
+shown_boxes = "cpu mem net proc"
+proc_sorting = "cpu lazy"
+proc_tree = False
+check_temp = True
+EOF
 }
 
 # Post-install starship setup. Installing the binary is not enough — without a
@@ -124,7 +151,8 @@ main() {
 		rich=1
 	fi
 
-	apt_install zsh zsh-syntax-highlighting zsh-autosuggestions tmux
+	apt_install zsh zsh-syntax-highlighting zsh-autosuggestions tmux btop
+	configure_btop "$u" "$home" "$grp"
 	if [ "$rich" = 1 ]; then
 		install_rich "$u"
 		configure_starship "$u" "$home" "$grp"
